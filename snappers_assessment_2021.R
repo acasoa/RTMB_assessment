@@ -39,7 +39,7 @@ par <- list(
   logSigmaIdx=0,
   logSigmaRec=0,
   logSigmaC=0,
-  RecDev=rep(0,length(dat$years)),
+  RecDevs=rep(0,length(dat$years)),
   logSL50=log(inputs$L50_f_fix),
   logdiff=log(inputs$L95_f_fix-inputs$L50_f_fix)
 )
@@ -58,10 +58,10 @@ nll <- function(par){
   
   ### length, weight and selex per age
   La <- linf*(1-exp(-k*(ages-t0)))
-  Wa <- aw*La^bw 
+  Wa <- aw*La^bw
   Sa <- 1/(1+exp(-log(19)*((La-SL50)/(SL95-SL50))))
   
-  ### Mortality matrices
+  ### Mortality matrixes
   Fmat <- outer(Sa,F)
   Zmat <- Fmat+M
   
@@ -71,7 +71,7 @@ nll <- function(par){
   # 1st row = recruitment
   N[1,1] <- R0
   for (a in 2:length(N[1,])) {
-    N[1,a] <- R0*exp(RecDev[a]-(0.5*sigmaRec^2))
+    N[1,a] <- R0*exp(RecDevs[a]-(0.5*sigmaRec^2))
   }
   
   # filling the matrix
@@ -88,6 +88,13 @@ nll <- function(par){
   -sum(dnorm(log(catch), logPredC, sigmaC, log=TRUE))
 }
 
-obj <- MakeADFun(nll,par)
+obj <- MakeADFun(nll,par, random = "RecDevs")
 fit <- nlminb(obj$par,obj$fn,obj$gr)
 fit$par
+
+fit$convergence
+max(abs(obj$gr(fit$par)))
+sdrep$pdHess
+
+
+
