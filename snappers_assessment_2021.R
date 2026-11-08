@@ -48,9 +48,9 @@ par <- list(
 nll <- function(par){
   getAll(par,dat)
   R0 <- exp(logR0)
-  #q <- exp(logq)
+  q <- exp(logq)
   F <- exp(logF)
-  #sigmaIdx <- exp(logSigmaIdx)
+  sigmaIdx <- exp(logSigmaIdx)
   sigmaRec <- exp(logSigmaRec)
   sigmaC <- exp(logSigmaC)
   SL50 <- exp(logSL50)
@@ -58,7 +58,7 @@ nll <- function(par){
   
   ### length, weight and selex per age
   La <- linf*(1-exp(-k*(ages-t0)))
-  Wa <- aw*La^bw
+  Wa <- aw*La^bw/1e6
   Sa <- 1/(1+exp(-log(19)*((La-SL50)/(SL95-SL50))))
   
   ### Mortality matrixes
@@ -89,13 +89,22 @@ nll <- function(par){
   ### predicted catch
   logPredC <- log(colSums(Fmat/Zmat*(1-exp(-Fmat-M))*N*Wa))
   
+  ret <- ret - sum(dnorm(log(catch), logPredC, sigmaC, log=TRUE))
+  
+  ### abundance index
+  Ba <- N*Wa*Sa
+  IndexPred <- colSums(q*Ba)
+  
+  # nll index
+  ret <- ret - sum(dnorm(log(index.obs), log(IndexPred), sigmaIdx, log=TRUE))
+  
+  ### reports
   B=colSums(N*Wa)
   ADREPORT(B)
   ADREPORT(F)
   ADREPORT(R0)
   
-  ret <- ret - sum(dnorm(log(catch), logPredC, sigmaC, log=TRUE))
-  ret
+  return(ret)
 }
 
 obj <- MakeADFun(nll,par, random = "RecDevs")
