@@ -1,8 +1,8 @@
-
+library(RTMB)
 #####data
 cat <- read.csv("data/analis.sc1.csv")
 ind <- read.csv("data/analis.index.csv")
-len <- read.csv("data/analis.LenComp.csv", header = F)
+len <- read.csv("data/analis.LenComp.csv", header = FALSE)
 colnames(len) <- as.character(len[1,])
 len <- len[-1,]
 inputs <- readRDS(paste0(getwd(),"/data/input.rds"))
@@ -28,20 +28,22 @@ dat <- list(
   Amax=30,
   ages=as.vector(1:30),
   CV_len = as.vector(inputs$CV_lt_f_old_mean),
-  sigma_R = inputs$sigmaR
+  sigma_R = inputs$sigmaR,
+  L50=inputs$L50_f_fix,
+  L95=inputs$L95_f_fix
 )
 
 ##### parameters list
 par <- list(
-  logR0=log(100000),
+  logR0=log(10000000),
   logq=log(0.001),
   logF=rep(log(0.2),length(dat$years)),
   logSigmaIdx=0,
   #logSigmaRec=0,
   #logSigmaC=0,
   RecDevs=rep(0,length(dat$years)),
-  logSL50=log(inputs$L50_f_fix),
-  logdiff=log(inputs$L95_f_fix-inputs$L50_f_fix)
+  logSL50=log(as.numeric(inputs$Sel50)),
+  logdiff=log(as.numeric(inputs$Selpeak)-as.numeric(inputs$Sel50))
 )
 
 ##### model
@@ -56,7 +58,7 @@ nll <- function(par){
   SL50 <- exp(logSL50)
   SL95 <- SL50 + exp(logdiff)
   
-  ### length, weight and selex per age
+  ### length, weigth and selex per age
   La <- linf*(1-exp(-k*(ages-t0)))
   Wa <- aw*La^bw/1e6
   Sa <- 1/(1+exp(-log(19)*((La-SL50)/(SL95-SL50))))
@@ -71,17 +73,15 @@ nll <- function(par){
   ret <- 0
   
   # 1st row = recruitment
-  N[1,1] <- R0
+  N[1,1] <- R0*exp(RecDevs[1] - 0.5*sigmaRec^2)
   for (t in 2:length(N[1,])) {
     N[1,t] <- R0*exp(RecDevs[t]-(0.5*sigmaRec^2))
   }
-  
   # 1st column - 1950
   for (a in 1:(Amax-1)) {
     N[a+1,1] <- N[a,1]*exp(-Zmat[a,1])
-    N[Amax,1] <- N[Amax-1,1]*exp(-Zmat[Amax-1,1]) + N[Amax, 1] * exp(-Zmat[Amax, 1])
   }
-  
+  N[Amax,1] <- N[Amax-1,1]*exp(-Zmat[Amax-1,1])+N[Amax,1]*exp(-Zmat[Amax,1])
   # recdevs nll
   ret <- ret - sum(dnorm(RecDevs,0,sigmaRec,log=TRUE))
   
@@ -95,14 +95,14 @@ nll <- function(par){
   
   ### predicted catch
   logPredC <- log(colSums(Fmat/Zmat*(1-exp(-Fmat-M))*N*Wa))
-  
+  # nll catch
   ret <- ret - sum(dnorm(log(catch), logPredC, sigmaC, log=TRUE))
   
   ### abundance index
   Ba <- N*Wa*Sa
   IndexPred <- colSums(q*Ba)
   IndexPred <- IndexPred[index.idx]
-  
+  #nll index
   ret <- ret - sum(dnorm(log(index.obs), log(IndexPred), sigmaIdx, log=TRUE))
   
   ### lengths
@@ -139,28 +139,40 @@ nll <- function(par){
   for (i in 1:length(ret_len)) {
     ret_len[i] <- -sum(dmultinom(x=as.vector(length.obs[i,]), prob=Pmat[i,], log=TRUE))
   }
-  
+  # nll lengths
   ret <- ret + sum(ret_len)
+  #ret <- ret - sum(dnorm(diff(logF), 0, 0.1, log = TRUE))
+  #ret <- ret - sum(dnorm(logF, mean = log(0.2), sd = 0.5, log = TRUE))
   
   ### reports
-  B=colSums(N*Wa)
+  Mata = 1.0 / (1.0 + exp(-log(19.0) * (La - L50) / (L95 - L50)))
+  SSB <- colSums(N*Wa*Mata*0.5)
+  Rec<- N[1, ]
+  B<- colSums(N*Wa)
+
+  ADREPORT(SSB)
+  ADREPORT(Rec)  
   ADREPORT(B)
   ADREPORT(F)
   ADREPORT(R0)
-  
+
   return(ret)
 }
 
 obj <- MakeADFun(nll,par, random = "RecDevs")
 fit <- nlminb(obj$par,obj$fn,obj$gr)
-fit$par
+sdrep <- sdreport(obj)
 
+fit$par
 fit$convergence
 max(abs(obj$gr(fit$par)))
 sdrep$pdHess
 
-sdrep <- sdreport(obj)
 pl <- as.list(sdrep, "Est")
 plr <- as.list(sdrep, "Est", report=TRUE)
 
-
+x11()
+plot(plr$SSB, ylim = c(0,10000))
+plot(plr$B, ylim = c(0,16000))
+plot(plr$F)
+plot(plr$Rec)
