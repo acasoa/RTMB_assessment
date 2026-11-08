@@ -68,11 +68,15 @@ nll <- function(par){
   ### biomass matrix
   N <- matrix(0,nrow = Amax,ncol = length(years))
   
+  ret <- 0
+  
   # 1st row = recruitment
   N[1,1] <- R0
   for (a in 2:length(N[1,])) {
     N[1,a] <- R0*exp(RecDevs[a]-(0.5*sigmaRec^2))
   }
+  
+  ret <- ret - sum(dnorm(RecDevs,0,sigmaRec,log=TRUE))
   
   # filling the matrix
   for (t in 1:(length(years)-1)) {
@@ -85,7 +89,8 @@ nll <- function(par){
   ### predicted catch
   logPredC <- log(colSums(Fmat/Zmat*(1-exp(-Fmat-M))*N*Wa))
   
-  -sum(dnorm(log(catch), logPredC, sigmaC, log=TRUE))
+  ret <- ret - sum(dnorm(log(catch), logPredC, sigmaC, log=TRUE))
+  ret
 }
 
 obj <- MakeADFun(nll,par, random = "RecDevs")
