@@ -37,8 +37,8 @@ par <- list(
   logq=log(0.001),
   logF=rep(log(0.2),length(dat$years)),
   logSigmaIdx=0,
-  logSigmaRec=0,
-  logSigmaC=0,
+  #logSigmaRec=0,
+  #logSigmaC=0,
   RecDevs=rep(0,length(dat$years)),
   logSL50=log(inputs$L50_f_fix),
   logdiff=log(inputs$L95_f_fix-inputs$L50_f_fix)
@@ -51,8 +51,8 @@ nll <- function(par){
   q <- exp(logq)
   F <- exp(logF)
   sigmaIdx <- exp(logSigmaIdx)
-  sigmaRec <- exp(logSigmaRec)
-  sigmaC <- exp(logSigmaC)
+  sigmaRec <- 0.6
+  sigmaC <- 0.1
   SL50 <- exp(logSL50)
   SL95 <- SL50 + exp(logdiff)
   
