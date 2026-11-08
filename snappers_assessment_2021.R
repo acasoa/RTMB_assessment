@@ -48,9 +48,9 @@ par <- list(
 nll <- function(par){
   getAll(par,dat)
   R0 <- exp(logR0)
-  #q <- exp(logq)
+  q <- exp(logq)
   F <- exp(logF)
-  #sigmaIdx <- exp(logSigmaIdx)
+  sigmaIdx <- exp(logSigmaIdx)
   sigmaRec <- exp(logSigmaRec)
   sigmaC <- exp(logSigmaC)
   SL50 <- exp(logSL50)
@@ -72,8 +72,8 @@ nll <- function(par){
   
   # 1st row = recruitment
   N[1,1] <- R0
-  for (a in 2:length(N[1,])) {
-    N[1,a] <- R0*exp(RecDevs[a]-(0.5*sigmaRec^2))
+  for (t in 2:length(N[1,])) {
+    N[1,t] <- R0*exp(RecDevs[t]-(0.5*sigmaRec^2))
   }
   
   ret <- ret - sum(dnorm(RecDevs,0,sigmaRec,log=TRUE))
@@ -89,19 +89,46 @@ nll <- function(par){
   ### predicted catch
   logPredC <- log(colSums(Fmat/Zmat*(1-exp(-Fmat-M))*N*Wa))
   
-  B=colSums(N*Wa)
-  ADREPORT(B)
-  ADREPORT(F)
-  ADREPORT(R0)
-  
   ret <- ret - sum(dnorm(log(catch), logPredC, sigmaC, log=TRUE))
   
   ### abundance index
   Ba <- N*Wa*Sa
   IndexPred <- colSums(q*Ba)
+  IndexPred <- IndexPred[index.idx]
   
-  # nll index
   ret <- ret - sum(dnorm(log(index.obs), log(IndexPred), sigmaIdx, log=TRUE))
+  
+  ### lengths
+  low <- c(-Inf,rep(0,length(length.bins)-1))
+  for (i in 2:length(length.bins)) {
+    low[i] <- length.bins[i]-0.5
+  }
+  
+  upp <- c(rep(0,length(length.bins)-1), Inf)
+  for (i in 1:(length(length.bins)-1)) {
+    upp[i] <- length.bins[i]+0.5
+  }
+  
+  Lmat <- matrix(0,nrow=length(ages), ncol=length(length.bins))
+  for (t in 1:length(length.bins)) {
+    for (a in 1:Amax) {
+      Lmat[a,t] <-  pnorm((Lmat[a,t]+upp[t]),La[a],CV_len*La[a]) - pnorm((Lmat[a,t]+low[t]),La[a],CV_len*La[a])
+    }
+  }
+  
+  Lmat <- Lmat/rowSums(Lmat)
+  
+  Pmat <- matrix(0,nrow=length(years), ncol=length(length.bins))
+  for (t in 1:length(years)) {
+    Pvul <- N[,t]*Sa
+    Lvul <- colSums(Pvul*Lmat)
+    Lvul <- Lvul/sum(Lvul)
+    Pmat[t,] <- Lvul
+  }
+  
+  Pmat <- Pmat[length.idx,]
+  
+  ret <- ret - sum(dmultinom(x=length.obs, prob=Pmat, log=TRUE))
   
   ### reports
   B=colSums(N*Wa)
