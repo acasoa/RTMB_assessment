@@ -48,9 +48,9 @@ par <- list(
 nll <- function(par){
   getAll(par,dat)
   R0 <- exp(logR0)
-  q <- exp(logq)
+  #q <- exp(logq)
   F <- exp(logF)
-  sigmaIdx <- exp(logSigmaIdx)
+  #sigmaIdx <- exp(logSigmaIdx)
   sigmaRec <- exp(logSigmaRec)
   sigmaC <- exp(logSigmaC)
   SL50 <- exp(logSL50)
@@ -88,6 +88,11 @@ nll <- function(par){
   
   ### predicted catch
   logPredC <- log(colSums(Fmat/Zmat*(1-exp(-Fmat-M))*N*Wa))
+  
+  B=colSums(N*Wa)
+  ADREPORT(B)
+  ADREPORT(F)
+  ADREPORT(R0)
   
   ret <- ret - sum(dnorm(log(catch), logPredC, sigmaC, log=TRUE))
   
