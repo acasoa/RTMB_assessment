@@ -118,17 +118,22 @@ nll <- function(par){
   
   Lmat <- Lmat/rowSums(Lmat)
   
+  Cnum <- (Fmat/Zmat)*(1-exp(-Zmat))*N
   Pmat <- matrix(0,nrow=length(years), ncol=length(length.bins))
   for (t in 1:length(years)) {
-    Pvul <- N[,t]*Sa
-    Lvul <- colSums(Pvul*Lmat)
+    Lvul <- colSums(Cnum[,t]*Lmat)
     Lvul <- Lvul/sum(Lvul)
     Pmat[t,] <- Lvul
   }
   
   Pmat <- Pmat[length.idx,]
   
-  ret <- ret - sum(dmultinom(x=length.obs, prob=Pmat, log=TRUE))
+  ret_len <- rep(0,nrow(Pmat))
+  for (i in 1:length(ret_len)) {
+    ret_len[i] <- -sum(dmultinom(x=as.vector(length.obs[i,]), prob=Pmat[i,], log=TRUE))
+  }
+  
+  ret <- ret + sum(ret_len)
   
   ### reports
   B=colSums(N*Wa)
@@ -147,5 +152,8 @@ fit$convergence
 max(abs(obj$gr(fit$par)))
 sdrep$pdHess
 
+sdrep <- sdreport(obj)
+pl <- as.list(sdrep, "Est")
+plr <- as.list(sdrep, "Est", report=TRUE)
 
 
