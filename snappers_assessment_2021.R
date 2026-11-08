@@ -76,6 +76,13 @@ nll <- function(par){
     N[1,t] <- R0*exp(RecDevs[t]-(0.5*sigmaRec^2))
   }
   
+  # 1st column - 1950
+  for (a in 1:(Amax-1)) {
+    N[a+1,1] <- N[a,1]*exp(-Zmat[a,1])
+    N[Amax,1] <- N[Amax-1,1]*exp(-Zmat[Amax-1,1]) + N[Amax, 1] * exp(-Zmat[Amax, 1])
+  }
+  
+  # recdevs nll
   ret <- ret - sum(dnorm(RecDevs,0,sigmaRec,log=TRUE))
   
   # filling the matrix
