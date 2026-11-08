@@ -1,56 +1,13 @@
-library(RTMB)
 
-dat <- read.table("ex0.dat", header = TRUE)
-
-par <- list(
-  logN1=log(500),
-  logF=log(0.2),
-  logsigma=0
-)
-
-nll <- function(par){
-  getAll(par,dat)
-  N1 <- exp(logN1)
-  F <- exp(logF)
-  M <- 0.2
-  sigma <- exp(logsigma)
-  
-  N <- c(N1 , rep (0 ,length(catch)-1))
-  for (i in 2:length(N)) {
-    N[i] <- N[i-1]*exp(-F-M)
-  }
-  
-  logPredC <- c(rep (0 ,length(catch)))
-  for (i in 1:length(logPredC)) {
-    logPredC[i] <- log(F/(F+M)*(1-exp(-F-M))*N[i])
-  }
-  
-  ADREPORT(N)
-  
-  -sum(dnorm(x=log(catch),mean=logPredC,sd=sigma,log = TRUE))
-}
-
-obj <- MakeADFun(nll, par)
-fit <- nlminb(obj$par,obj$fn,obj$gr)
-exp(fit$par)
-sdrep <- sdreport(obj)
-pl <- as.list(sdrep, "Est")
-plr <- as.list(sdrep, "Est", report=TRUE)
-
-######
-#data
+#####data
 cat <- read.csv("data/analis.sc1.csv")
 ind <- read.csv("data/analis.index.csv")
 len <- read.csv("data/analis.LenComp.csv", header = F)
 colnames(len) <- as.character(len[1,])
 len <- len[-1,]
 inputs <- readRDS(paste0(getwd(),"/data/input.rds"))
-cat
-ind
-len
-inputs
 
-
+##### input data
 dat <- list(
   years=as.vector(cat$Year),
   catch=as.vector(cat$Handline),
@@ -70,24 +27,24 @@ dat <- list(
   M=inputs$M_f_fix,
   Amax=30,
   ages=as.vector(1:30),
-  SL50=inputs$L50_f_fix,SL95=inputs$L95_f_fix,
   CV_len = as.vector(inputs$CV_lt_f_old_mean),
   sigma_R = inputs$sigmaR
 )
 
+##### parameters list
 par <- list(
-  logR0=log(10000),
+  logR0=log(100000),
   logq=log(0.001),
-  logF=log(0.2),
+  logF=rep(log(0.2),length(dat$years)),
   logSigmaIdx=0,
   logSigmaRec=0,
-  RecDev=rep(0,length(dat$years))
+  logSigmaC=0,
+  RecDev=rep(0,length(dat$years)),
+  logSL50=log(inputs$L50_f_fix),
+  logdiff=log(inputs$L95_f_fix-inputs$L50_f_fix)
 )
 
-
-#### model
-
-
+##### model
 nll <- function(par){
   getAll(par,dat)
   R0 <- exp(logR0)
@@ -95,44 +52,42 @@ nll <- function(par){
   F <- exp(logF)
   sigmaIdx <- exp(logSigmaIdx)
   sigmaRec <- exp(logSigmaRec)
+  sigmaC <- exp(logSigmaC)
+  SL50 <- exp(logSL50)
+  SL95 <- SL50 + exp(logdiff)
   
+  ### length, weight and selex per age
+  La <- linf*(1-exp(-k*(ages-t0)))
+  Wa <- aw*La^bw 
+  Sa <- 1/(1+exp(-log(19)*((La-SL50)/(SL95-SL50))))
+  
+  ### Mortality matrices
+  Fmat <- outer(Sa,F)
+  Zmat <- Fmat+M
+  
+  ### biomass matrix
   N <- matrix(0,nrow = Amax,ncol = length(years))
+  
+  # 1st row = recruitment
   N[1,1] <- R0
-  for (i in 2:length(N[1,])) {
-    N[1,i] <- R0*exp(RecDev[i]-(0.5*sigmaRec^2))
+  for (a in 2:length(N[1,])) {
+    N[1,a] <- R0*exp(RecDev[a]-(0.5*sigmaRec^2))
   }
   
+  # filling the matrix
+  for (t in 1:(length(years)-1)) {
+    for (a in 1:(Amax-1)) {
+      N[a+1,t+1] <- N[a,t]*exp(-Zmat[a,t])
+    }
+    N[Amax,t+1] <- N[Amax-1,t]*exp(-Zmat[Amax-1,t]) + N[Amax, t] * exp(-Zmat[Amax, t])
+  }
+  
+  ### predicted catch
+  logPredC <- log(colSums(Fmat/Zmat*(1-exp(-Fmat-M))*N*Wa))
+  
+  -sum(dnorm(log(catch), logPredC, sigmaC, log=TRUE))
 }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+obj <- MakeADFun(nll,par)
+fit <- nlminb(obj$par,obj$fn,obj$gr)
+fit$par
