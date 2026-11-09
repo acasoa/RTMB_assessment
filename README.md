@@ -20,7 +20,7 @@ The model follows an age-structured, statistical catch-at-age approach adapted f
 ## Key Results & Validation
 The model successfully converged, demonstrating high agreement with the original SS3 output:
 - **Estimated Selectivity (SL50):** `39.3 cm` (SS3 matched: `39.0 cm`).
-- **Depletion:** The model reveals a severe stock decline, reaching a `Bratio` (SSB/SSB_virgin) of ~0.14, categorized as overfished.
+- **Depletion:** The model reveals a severe stock decline, reaching a $B_{ratio}$ ($SSB/SSB_{virgin}$) of ~0.14, categorized as overfished.
 - **Model Selection:** AIC comparison showed that the Flat, Beverton-Holt and Ricker models performed similarly. Beverton-Holt was retained for management reference points due to biological plausibility.
 - **Reference Points (Beverton-Holt):** Successfully derived $F_{MSY} = 0.184$ and $SSB_{MSY} = 2435.9$ tons. These closely match the SS3 outputs ($F_{MSY} = 0.140$, $SSB_{MSY} = 2205.9$), validating the RTMB implementation.
 
