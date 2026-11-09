@@ -1,3 +1,4 @@
+setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
 library(RTMB)
 #####data
 cat <- read.csv("data/analis.sc1.csv")
@@ -25,12 +26,14 @@ dat <- list(
   aw=inputs$WLa_f_fix,
   bw=inputs$WLb_f_fix,
   M=inputs$M_f_fix,
-  Amax=30,
-  ages=as.vector(1:30),
+  Amax=inputs$Nages_in,
+  ages=as.vector(1:inputs$Nages_in),
   CV_len = as.vector(inputs$CV_lt_f_old_mean),
   sigma_R = inputs$sigmaR,
   L50=inputs$L50_f_fix,
-  L95=inputs$L95_f_fix
+  L95=inputs$L95_f_fix,
+  h=inputs$h
+  ,rec=1
 )
 
 ##### parameters list
@@ -49,19 +52,29 @@ par <- list(
 ##### model
 nll <- function(par){
   getAll(par,dat)
+  if (!exists("rec")) {
+    warning("Recruitment assumed flat", call. = FALSE)
+    rec <- 0
+  }else if (rec==1) {
+    warning("Recruitment assumed Beverton-Holt", call. = FALSE)
+  } else if (rec==2) {
+    warning("Recruitment assumed Ricker", call. = FALSE)
+  }
   R0 <- exp(logR0)
   q <- exp(logq)
   F <- exp(logF)
   sigmaIdx <- exp(logSigmaIdx)
-  sigmaRec <- 0.6
-  sigmaC <- 0.1
+  sigmaRec <- sigma_R
+  sigmaC <- 0.2
   SL50 <- exp(logSL50)
   SL95 <- SL50 + exp(logdiff)
+  
   
   ### length, weigth and selex per age
   La <- linf*(1-exp(-k*(ages-t0)))
   Wa <- aw*La^bw/1e6
   Sa <- 1/(1+exp(-log(19)*((La-SL50)/(SL95-SL50))))
+  Mata = 1.0 / (1.0 + exp(-log(19.0) * (La - L50) / (L95 - L50)))
   
   ### Mortality matrixes
   Fmat <- outer(Sa,F)
@@ -69,33 +82,76 @@ nll <- function(par){
   
   ### biomass matrix
   N <- matrix(0,nrow = Amax,ncol = length(years))
-  
   ret <- 0
   
-  # 1st row = recruitment
-  N[1,1] <- R0*exp(RecDevs[1] - 0.5*sigmaRec^2)
-  for (t in 2:length(N[1,])) {
-    N[1,t] <- R0*exp(RecDevs[t]-(0.5*sigmaRec^2))
-  }
-  # 1st column - 1950
+  # ssb virgin 
+  SSBv <- c(R0,rep(0,length(ages)-1))
   for (a in 1:(Amax-1)) {
-    N[a+1,1] <- N[a,1]*exp(-Zmat[a,1])
+    SSBv[a+1] <- SSBv[a]*exp(-M)
   }
-  N[Amax,1] <- N[Amax-1,1]*exp(-Zmat[Amax-1,1])+N[Amax,1]*exp(-Zmat[Amax,1])
+  SSBv[Amax] <- SSBv[Amax-1]*exp(-M)/(1-exp(-M))
+  SSB0 <- sum(SSBv*Wa*Mata*0.5)
+  
+  if(rec==0){ # flat
+    # 1st row = recruitment
+    N[1,1] <- R0*exp(RecDevs[1] - 0.5*sigmaRec^2)
+    for (t in 2:length(N[1,])) {
+      N[1,t] <- R0*exp(RecDevs[t]-(0.5*sigmaRec^2))
+    }
+    
+    for (a in 1:(Amax-1)) {
+      N[a+1,1] <- N[a,1]*exp(-Zmat[a,1])
+    }
+    
+    for (t in 1:(length(years)-1)) {
+      for (a in 1:(Amax-1)) {
+        N[a+1,t+1] <- N[a,t]*exp(-Zmat[a,t])
+      }
+      N[Amax,t+1] <- N[Amax-1,t]*exp(-Zmat[Amax-1,t]) + N[Amax, t] * exp(-Zmat[Amax, t])
+    }
+  } else if(rec==1){ # Beverton and Holt
+
+    # 1st row = recruitment
+    N[1,1] <- R0*exp(RecDevs[1] - 0.5*sigmaRec^2)
+    for (a in 1:(Amax-1)) {
+      N[a+1,1] <- N[a,1]*exp(-Zmat[a,1])
+    }
+    
+    for (t in 1:(length(years)-1)) {
+      ssbly <- sum(N[,t]*Wa*Mata*0.5)
+      N[1,t+1] <- (4*h*R0*ssbly)/(SSB0*(1-h)+ssbly*(5*h-1))*exp(RecDevs[t+1] - 0.5*sigmaRec^2)
+      
+      for (a in 1:(Amax-1)) {
+        N[a+1,t+1] <- N[a,t]*exp(-Zmat[a,t])
+      }
+      N[Amax, t+1] <- N[Amax-1, t] * exp(-Zmat[Amax-1, t]) + N[Amax, t] * exp(-Zmat[Amax, t])
+    }
+    
+  } else if(rec==2){ # Ricker's 
+    
+    # 1st row = recruitment
+    N[1,1] <- R0*exp(RecDevs[1] - 0.5*sigmaRec^2)
+    for (a in 1:(Amax-1)) {
+      N[a+1,1] <- N[a,1]*exp(-Zmat[a,1])
+    }
+    
+    for (t in 1:(length(years)-1)) {
+      ssbly <- sum(N[,t]*Wa*Mata*0.5)
+      N[1,t+1] <- R0*(ssbly/SSB0)*exp((log(5*h)/0.8)*(1-ssbly/SSB0))* exp(RecDevs[t+1] - 0.5*sigmaRec^2)
+      
+      for (a in 1:(Amax-1)) {
+        N[a+1,t+1] <- N[a,t]*exp(-Zmat[a,t])
+      }
+      N[Amax, t+1] <- N[Amax-1, t] * exp(-Zmat[Amax-1, t]) + N[Amax, t] * exp(-Zmat[Amax, t])
+    }
+  }
+  
   # recdevs nll
   ret <- ret - sum(dnorm(RecDevs,0,sigmaRec,log=TRUE))
   
-  # filling the matrix
-  for (t in 1:(length(years)-1)) {
-    for (a in 1:(Amax-1)) {
-      N[a+1,t+1] <- N[a,t]*exp(-Zmat[a,t])
-    }
-    N[Amax,t+1] <- N[Amax-1,t]*exp(-Zmat[Amax-1,t]) + N[Amax, t] * exp(-Zmat[Amax, t])
-  }
-  
   ### predicted catch
   logPredC <- log(colSums(Fmat/Zmat*(1-exp(-Fmat-M))*N*Wa))
-  # nll catch
+  # catch nll
   ret <- ret - sum(dnorm(log(catch), logPredC, sigmaC, log=TRUE))
   
   ### abundance index
@@ -145,17 +201,22 @@ nll <- function(par){
   #ret <- ret - sum(dnorm(logF, mean = log(0.2), sd = 0.5, log = TRUE))
   
   ### reports
-  Mata = 1.0 / (1.0 + exp(-log(19.0) * (La - L50) / (L95 - L50)))
+  
   SSB <- colSums(N*Wa*Mata*0.5)
   Rec<- N[1, ]
   B<- colSums(N*Wa)
-
+  Fstd <- colSums(Fmat*N*Wa)/colSums(Wa*N) 
+  
+  ADREPORT(SSB0)
   ADREPORT(SSB)
   ADREPORT(Rec)  
   ADREPORT(B)
-  ADREPORT(F)
+  ADREPORT(Fstd)
   ADREPORT(R0)
-
+  ADREPORT(Wa)
+  ADREPORT(Mata)
+  ADREPORT(Sa)
+  
   return(ret)
 }
 
@@ -170,9 +231,22 @@ sdrep$pdHess
 
 pl <- as.list(sdrep, "Est")
 plr <- as.list(sdrep, "Est", report=TRUE)
+plr_se <- as.list(sdrep, "Std. Error", report = TRUE)
 
 x11()
-plot(plr$SSB, ylim = c(0,10000))
-plot(plr$B, ylim = c(0,16000))
-plot(plr$F)
-plot(plr$Rec)
+par(mfrow=c(2,2))
+plot(dat$years,plr$B, ylim = c(0,25000), pch=20)
+lines(dat$years,plr$B)
+lines(dat$years,plr$B - 1.96 * plr_se$B)
+lines(dat$years,plr$B + 1.96 * plr_se$B)
+
+plot(dat$years,plr$SSB, ylim = c(0,12000), pch=20)
+lines(dat$years,plr$SSB)
+lines(dat$years,plr$SSB - 1.96 * plr_se$SSB)
+lines(dat$years,plr$SSB + 1.96 * plr_se$SSB)
+
+plot(dat$years,plr$Rec, pch=20)
+lines(dat$years,plr$Rec)
+plot(dat$years,plr$Fstd, pch=20)
+
+#graphics.off()
