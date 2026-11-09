@@ -22,7 +22,7 @@ The model successfully converged, demonstrating high agreement with the original
 - **Estimated Selectivity (SL50):** `39.3 cm` (SS3 matched: `39.0 cm`).
 - **Depletion:** The model reveals a severe stock decline, reaching a `Bratio` (SSB/SSB_virgin) of ~0.14, categorized as overfished.
 - **Model Selection:** AIC comparison showed that the Flat, Beverton-Holt and Ricker models performed similarly. Beverton-Holt was retained for management reference points due to biological plausibility.
-- **Reference Points (Beverton-Holt):** Successfully derived \(F_{MSY}\) = `0.184` and \(SSB_{MSY}\) = `2435.9` tons. These closely match the SS3 outputs (\(F_{MSY}\) = 0.140, \(SSB_{MSY}\) = 2205.9), validating the RTMB implementation.
+- **Reference Points (Beverton-Holt):** Successfully derived $F_{MSY} = 0.184$ and $SSB_{MSY} = 2435.9$ tons. These closely match the SS3 outputs ($F_{MSY} = 0.140$, $SSB_{MSY} = 2205.9$), validating the RTMB implementation.
 
 **SS3 Baseline & Reproducibility:** 
 The original SS3 input files (`starter.ss`, `controlfile.ctl`, `datafile.dat`, `forecast.ss`) used for comparison are available in the `ss3_baseline/` folder.
