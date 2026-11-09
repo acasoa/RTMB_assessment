@@ -44,7 +44,7 @@ This repository documents the step-by-step construction of the model through 11 
 
 ## Citation
 If you use this code or framework in your research, please cite the original assessment:
-> Soares, A. et al. (2025). *Integrated Stock Assessment of Snappers using RTMB: A validation against SS3.* Fisheries Management and Ecology. https://doi.org/10.1111/fme.70008
+> Soares, A. et al. (2025). *20 Years Later: Updated Stock Assessment of Snappers in Northeast Brazil Using an Integrated Stock Assessment Framework.* Fisheries Management and Ecology. https://doi.org/10.1111/fme.70008
 
 ## Author
 **Andrey Soares**
