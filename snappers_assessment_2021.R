@@ -1,6 +1,8 @@
 setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
 library(RTMB)
-#####data
+library(SPoRC)
+library(scales)
+#### data preparation ####
 cat <- read.csv("data/analis.sc1.csv")
 ind <- read.csv("data/analis.index.csv")
 len <- read.csv("data/analis.LenComp.csv", header = FALSE)
@@ -8,7 +10,6 @@ colnames(len) <- as.character(len[1,])
 len <- len[-1,]
 inputs <- readRDS(paste0(getwd(),"/data/input.rds"))
 
-##### input data
 dat <- list(
   years=as.vector(cat$Year),
   catch=as.vector(cat$Handline),
@@ -24,19 +25,19 @@ dat <- list(
   k=inputs$k_f_fix,
   t0=inputs$t0_f_fix,
   aw=inputs$WLa_f_fix,
-  bw=inputs$WLb_f_fix,
-  M=inputs$M_f_fix,
-  Amax=inputs$Nages_in,
+  bw=inputs$WLb_f_fix
+  #,M=inputs$M_f_fix
+  ,Amax=inputs$Nages_in,
   ages=as.vector(1:inputs$Nages_in),
   CV_len = as.vector(inputs$CV_lt_f_old_mean),
   sigma_R = inputs$sigmaR,
   L50=inputs$L50_f_fix,
-  L95=inputs$L95_f_fix,
-  h=inputs$h
-  ,rec=1
+  L95=inputs$L95_f_fix
+  #,h=inputs$h
+  ,rec=1,
+  ESS=FALSE
 )
 
-##### parameters list
 par <- list(
   logR0=log(10000000),
   logq=log(0.001),
@@ -46,12 +47,15 @@ par <- list(
   #logSigmaC=0,
   RecDevs=rep(0,length(dat$years)),
   logSL50=log(as.numeric(inputs$Sel50)),
-  logdiff=log(as.numeric(inputs$Selpeak)-as.numeric(inputs$Sel50))
+  logdiff=log(as.numeric(inputs$Selpeak)-as.numeric(inputs$Sel50)),
+  h=inputs$h,
+  M=inputs$M_f_fix
 )
 
-##### model
+#### model configuration ####
 nll <- function(par){
   getAll(par,dat)
+  ### loading data ####
   if (!exists("rec")) {
     warning("Recruitment assumed flat", call. = FALSE)
     rec <- 0
@@ -62,7 +66,7 @@ nll <- function(par){
   }
   R0 <- exp(logR0)
   q <- exp(logq)
-  F <- exp(logF)
+  Fi <- exp(logF)
   sigmaIdx <- exp(logSigmaIdx)
   sigmaRec <- sigma_R
   sigmaC <- 0.2
@@ -70,21 +74,20 @@ nll <- function(par){
   SL95 <- SL50 + exp(logdiff)
   
   
-  ### length, weigth and selex per age
+  ### length, weigth and selex per age ####
   La <- linf*(1-exp(-k*(ages-t0)))
   Wa <- aw*La^bw/1e6
   Sa <- 1/(1+exp(-log(19)*((La-SL50)/(SL95-SL50))))
   Mata = 1.0 / (1.0 + exp(-log(19.0) * (La - L50) / (L95 - L50)))
   
-  ### Mortality matrixes
-  Fmat <- outer(Sa,F)
+  ### Mortality matrixes ####
+  Fmat <- outer(Sa,Fi)
   Zmat <- Fmat+M
   
-  ### biomass matrix
+  ### biomass matrix ####
   N <- matrix(0,nrow = Amax,ncol = length(years))
-  ret <- 0
   
-  # ssb virgin 
+  ### ssb virgin ####
   SSBv <- c(R0,rep(0,length(ages)-1))
   for (a in 1:(Amax-1)) {
     SSBv[a+1] <- SSBv[a]*exp(-M)
@@ -92,6 +95,7 @@ nll <- function(par){
   SSBv[Amax] <- SSBv[Amax-1]*exp(-M)/(1-exp(-M))
   SSB0 <- sum(SSBv*Wa*Mata*0.5)
   
+  #### recruitment  ####
   if(rec==0){ # flat
     # 1st row = recruitment
     N[1,1] <- R0*exp(RecDevs[1] - 0.5*sigmaRec^2)
@@ -146,22 +150,26 @@ nll <- function(par){
     }
   }
   
-  # recdevs nll
-  ret <- ret - sum(dnorm(RecDevs,0,sigmaRec,log=TRUE))
+  ### nll RecDevs ####
+  nll.recdevs.i <- -(dnorm(RecDevs,0,sigmaRec,log=TRUE))
+  nll.recdevs <- sum(nll.recdevs.i)
   
-  ### predicted catch
+  ### predicted catch ####
   logPredC <- log(colSums(Fmat/Zmat*(1-exp(-Fmat-M))*N*Wa))
-  # catch nll
-  ret <- ret - sum(dnorm(log(catch), logPredC, sigmaC, log=TRUE))
   
-  ### abundance index
+  ### nll catch ####
+  nll.catch.i <- -(dnorm(log(catch), logPredC, sigmaC, log=TRUE))
+  nll.catch <- sum(nll.catch.i)
+  
+  ### abundance index ####
   Ba <- N*Wa*Sa
   IndexPred <- colSums(q*Ba)
   IndexPred <- IndexPred[index.idx]
-  #nll index
-  ret <- ret - sum(dnorm(log(index.obs), log(IndexPred), sigmaIdx, log=TRUE))
+  ### nll index ####
+  nll.index.i <- -(dnorm(log(index.obs), log(IndexPred), sigmaIdx, log=TRUE))
+  nll.index <- sum(nll.index.i)
   
-  ### lengths
+  ### lengths ####
   low <- c(-Inf,rep(0,length(length.bins)-1))
   for (i in 2:length(length.bins)) {
     low[i] <- length.bins[i]-0.5
@@ -191,38 +199,68 @@ nll <- function(par){
   
   Pmat <- Pmat[length.idx,]
   
-  ret_len <- rep(0,nrow(Pmat))
-  for (i in 1:length(ret_len)) {
-    ret_len[i] <- -sum(dmultinom(x=as.vector(length.obs[i,]), prob=Pmat[i,], log=TRUE))
-  }
-  # nll lengths
-  ret <- ret + sum(ret_len)
-  #ret <- ret - sum(dnorm(diff(logF), 0, 0.1, log = TRUE))
-  #ret <- ret - sum(dnorm(logF, mean = log(0.2), sd = 0.5, log = TRUE))
+  length.prop <- length.obs/rowSums(length.obs)
+  length.ESS <- length.nsamps*5
+  length.adjusted <- length.prop*length.ESS
   
-  ### reports
+  nll.length.i <- rep(0,nrow(Pmat))
+  
+  ### nll lengths ####
+  if(ESS==FALSE){
+    for (i in 1:length(nll.length.i)) {
+      nll.length.i[i] <- -sum(dmultinom(x=as.vector(length.obs[i,]), prob=Pmat[i,], log=TRUE))
+    }
+    nll.length <- sum(nll.length.i)
+  } else {
+    for (i in 1:length(nll.length.i)) {
+      nll.length.i[i] <- -sum(dmultinom(x=as.vector(length.adjusted[i,]), prob=Pmat[i,], log=TRUE))
+    }
+    nll.length <- sum(nll.length.i)
+  }
+  ### nll total ####
+  ret <- sum(nll.recdevs,nll.catch,nll.index,nll.length)
+
+  ### reports ####
   
   SSB <- colSums(N*Wa*Mata*0.5)
   Rec<- N[1, ]
   B<- colSums(N*Wa)
-  Fstd <- colSums(Fmat*N*Wa)/colSums(Wa*N) 
+  F <- apply(Fmat, 2, max) 
+  Bratio <- SSB/SSB0
   
   ADREPORT(SSB0)
   ADREPORT(SSB)
-  ADREPORT(Rec)  
+  ADREPORT(Bratio)
+  ADREPORT(Rec)
   ADREPORT(B)
-  ADREPORT(Fstd)
+  ADREPORT(F)
   ADREPORT(R0)
   ADREPORT(Wa)
   ADREPORT(Mata)
   ADREPORT(Sa)
-  
+  ADREPORT(nll.recdevs)
+  ADREPORT(nll.catch)
+  ADREPORT(nll.index)
+  ADREPORT(nll.length)
+  ADREPORT(ret)
+  ADREPORT(nll.catch.i)
+  ADREPORT(nll.index.i)
+  ADREPORT(nll.length.i)
+  ADREPORT(logPredC)
+  ADREPORT(IndexPred)
+  ADREPORT(Pmat)
+  #####  
   return(ret)
 }
 
-obj <- MakeADFun(nll,par, random = "RecDevs")
+#### model fitting and quick diags ####
+{starttime <- Sys.time()
+obj <- MakeADFun(nll,par, random = "RecDevs", map = list(M=factor(NA), h=factor(NA)))
 fit <- nlminb(obj$par,obj$fn,obj$gr)
 sdrep <- sdreport(obj)
+endtime <- Sys.time()
+runtime <- endtime-starttime
+round(runtime,2)}
 
 fit$par
 fit$convergence
@@ -233,20 +271,124 @@ pl <- as.list(sdrep, "Est")
 plr <- as.list(sdrep, "Est", report=TRUE)
 plr_se <- as.list(sdrep, "Std. Error", report = TRUE)
 
-x11()
-par(mfrow=c(2,2))
-plot(dat$years,plr$B, ylim = c(0,25000), pch=20)
-lines(dat$years,plr$B)
-lines(dat$years,plr$B - 1.96 * plr_se$B)
-lines(dat$years,plr$B + 1.96 * plr_se$B)
+#### jitter analysis ####
+#### likelihood profiles (M and h) ####
+#### retrospective ####
+#### hindcast ####
+#### plots ####
 
-plot(dat$years,plr$SSB, ylim = c(0,12000), pch=20)
-lines(dat$years,plr$SSB)
-lines(dat$years,plr$SSB - 1.96 * plr_se$SSB)
-lines(dat$years,plr$SSB + 1.96 * plr_se$SSB)
+# 3 panel catch, index fit and lengths fit
+{
+  #x11()
+  #pdf("figures/model_fits.pdf", width = 8, height = 11)
+  wd <- 3000
+  ht <- 4000
+  re <- 300
+  png("figures/model_fits.png", width = wd, height = ht, res = re)
+  par(mfrow = c(3, 1), mar = c(4, 4, 2, 1))
+  # catch timeseries
+  plot(dat$years, dat$catch, pch = 20, type = "h",lwd = 10,
+       xlab = "Year", ylab = "Catch (Metric tons)", col = "gray70",
+       main = "Catch time series")
+  # cpue residuals
+  plot(dat$index.yrs, dat$index.obs, pch = 20,
+       xlab = "Year", ylab = "Abundance index",
+       main = "Observed vs Predicted abundance index", ylim = c(0, 12))
+  lines(dat$index.yrs, plr$IndexPred, col = "red", lwd = 2)
+  legend("topright", legend = c("Observed", "Predicted"), 
+         col = c("black", "red"), pch = c(20, NA), lty = c(NA, 1), lwd = c(NA, 2))
+  
+  # length residuals
+  plot(dat$length.bins, 
+       colSums(dat$length.obs)/sum(colSums(dat$length.obs)), 
+       type = "h", lwd = 6, col = "gray70",
+       xlab = "Length (cm)", ylab = "Proportion", 
+       main = "Aggregated Length Composition",
+       ylim = c(0, 0.05))
+  lines(dat$length.bins, 
+        colSums(matrix(plr$Pmat, nrow = length(dat$length.idx),ncol = length(dat$length.bins))
+                                 *dat$length.nsamps)/sum(dat$length.nsamps)
+        , col = "red", lwd = 2.5, type = "b", pch = 16, cex = 0.6)
+  legend("topright", legend = c("Observed", "Predicted"), 
+         col = c("gray70", "red"), lwd = c(6, 2.5), lty = c(1, 1), pch = c(NA, 16))
+  graphics.off()
+}
 
-plot(dat$years,plr$Rec, pch=20)
-lines(dat$years,plr$Rec)
-plot(dat$years,plr$Fstd, pch=20)
+# 2 panel catch residuals and index residuals
+{ 
+  #x11()
+  #pdf("figures/residuals_plots.pdf", width = 8, height = 8)
+  wd <- 3000
+  ht <- 4000
+  re <- 300
+  png("figures/residuals_plots.png", width = wd, height = ht, res = re)
+  par(mfrow=c(2,1))
+  
+  # catch residuals
+  resid.catch <- log(dat$catch) - plr$logPredC
+  plot(dat$years, resid.catch, pch = 20,
+       xlab = "Year", ylab = "Log Residuals",
+       main = "Catch Residuals", ylim = c(-1, 1))
+  abline(h = 0, col = "red", lty = 1)
+  
+  # cpue residuals
+  resid.index <- log(dat$index.obs) - log(plr$IndexPred)
+  plot(dat$index.yrs, resid.index, pch=20, ylim=c(-1,1), main="CPUE Residuals",
+       xlab = "Year", ylab = "Log Residuals",)
+  abline(h=0, col="red", lty=1)
+  graphics.off()
+}
 
-#graphics.off()
+# 4 panel biomass, bratio, RecDevs and F
+{
+  wd <- 4000
+  ht <- 3000
+  re <- 300
+  #x11()
+  png("figures/results_2x2.png", width = wd, height = ht, res = 300)
+  par(mfrow=c(2,2))
+  plot(dat$years,plr$B, ylim = c(0,max(plr$B + 1.96 * plr_se$B)), pch=20,
+       ylab = "Biomass (t)", main = "Total Biomass")
+  lines(dat$years,plr$B)
+  lines(dat$years,plr$B - 1.96 * plr_se$B, lty=2)
+  lines(dat$years,plr$B + 1.96 * plr_se$B, lty=2)
+  
+  plot(dat$years,plr$Bratio, 
+       ylim = c(0,as.numeric(number(max(plr$Bratio + 1.96 * plr_se$Bratio),0.1))), pch=20,
+       xlab = "Year", ylab = expression(Depletion ~ (SSB / SSB[0])), main = "Stock Depletion (Bratio)")
+  lines(dat$years,plr$Bratio)
+  lines(dat$years,plr$Bratio - 1.96 * plr_se$Bratio, lty=2)
+  lines(dat$years,plr$Bratio + 1.96 * plr_se$Bratio, lty=2)
+  
+  plot(dat$years,plr$Rec/1e6, pch=20,
+       xlab = "Year", ylab = "Age-0 recruits (Millions)", main = "Recruitment")
+  lines(dat$years,plr$Rec/1e6)
+  plot(dat$years,plr$F, pch=20, ylim = c(0,max(plr$F + 1.96*plr_se$F)),
+       xlab = "Year", ylab = "F", main = "Fishing Mortality")
+  arrows(dat$years, plr$F - 1.96*plr_se$F,
+         dat$years, plr$F + 1.96*plr_se$F,
+         angle=0, code=3, length=0.02)
+  graphics.off()
+
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
