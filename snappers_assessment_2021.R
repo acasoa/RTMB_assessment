@@ -2,6 +2,7 @@ setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
 library(RTMB)
 library(SPoRC)
 library(scales)
+library(dplyr)
 #### data preparation ####
 cat <- read.csv("data/analis.sc1.csv")
 ind <- read.csv("data/analis.index.csv")
@@ -255,7 +256,8 @@ nll <- function(par){
 
 #### model fitting and quick diags ####
 {starttime <- Sys.time()
-obj <- MakeADFun(nll,par, random = "RecDevs", map = list(M=factor(NA), h=factor(NA)))
+mapping <- list(M=factor(NA), h=factor(NA))
+obj <- MakeADFun(nll,par, random = "RecDevs", map = mapping)
 fit <- nlminb(obj$par,obj$fn,obj$gr)
 sdrep <- sdreport(obj)
 endtime <- Sys.time()
@@ -272,6 +274,102 @@ plr <- as.list(sdrep, "Est", report=TRUE)
 plr_se <- as.list(sdrep, "Std. Error", report = TRUE)
 
 #### jitter analysis ####
+# adapting do_jitter() function from SPoRC package
+do_jitter1 <- function (data, parameters, mapping, random = NULL, sd, n_jitter, 
+          n_newton_loops, do_par, n_cores, par_vec = NULL) 
+{
+  jitter_all <- data.frame()
+  obj <- RTMB::MakeADFun(func = nll, parameters = parameters, 
+                         map = mapping, random = random, silent = TRUE)
+  if (do_par == FALSE) {
+    for (i in 1:n_jitter) {
+      if (is.null(par_vec)) 
+        jitter_pars <- obj$par + stats::rnorm(length(obj$par), 
+                                              0, sd)
+      else jitter_pars <- par_vec + stats::rnorm(length(obj$par), 
+                                                 0, sd)
+      optim <- stats::nlminb(jitter_pars, obj$fn, obj$gr, 
+                             control = list(iter.max = 1e+05, eval.max = 1e+05, 
+                                            rel.tol = 1e-15))
+      try_improve <- tryCatch(expr = for (j in 1:n_newton_loops) {
+        g = as.numeric(obj$gr(optim$par))
+        h = optimHess(optim$par, fn = obj$fn, gr = obj$gr)
+        optim$par = optim$par - solve(h, g)
+        optim$objective = obj$fn(optim$par)
+      }, error = function(e) {
+        e
+      }, warning = function(w) {
+        w
+      })
+      obj$rep <- obj$report(obj$env$last.par.best)
+      obj$sd_rep <- RTMB::sdreport(obj)
+      plr1 <- as.list(obj$sd_rep, "Est", report=TRUE)
+      jitter_ts_df <- data.frame(
+        Year = data$years,
+        SSB = as.numeric(plr1$SSB),
+        Rec = as.numeric(plr1$Rec))
+      jitter_ts_df$jitter  <-  i
+      jitter_ts_df$Hessian  <-  obj$sd_rep$pdHess
+      jitter_ts_df$jnLL  <-  optim$objective
+      jitter_ts_df$Max_Gradient <-  max(abs(obj$sd_rep$gradient.fixed))
+      
+      jitter_all <- rbind(jitter_all, jitter_ts_df)
+    }
+  }
+  if (do_par == TRUE) {
+    future::plan(future::multisession, workers = n_cores)
+    progressr::with_progress({
+      p <- progressr::progressor(along = 1:n_jitter)
+      jitter_all <- future.apply::future_lapply(1:n_jitter, 
+                                                function(i) {
+                                                  obj <- RTMB::MakeADFun(func = nll, 
+                                                                         parameters = parameters, map = mapping, random = random, 
+                                                                         silent = TRUE)
+                                                  if (is.null(par_vec)) 
+                                                    jitter_pars <- obj$par + stats::rnorm(length(obj$par), 
+                                                                                          0, sd)
+                                                  else jitter_pars <- par_vec + stats::rnorm(length(obj$par), 
+                                                                                             0, sd)
+                                                  optim <- stats::nlminb(jitter_pars, obj$fn, 
+                                                                         obj$gr, control = list(iter.max = 1e+05, 
+                                                                                                eval.max = 1e+05, rel.tol = 1e-15))
+                                                  try_improve <- tryCatch({
+                                                    for (j in 1:n_newton_loops) {
+                                                      g <- as.numeric(obj$gr(optim$par))
+                                                      h <- optimHess(optim$par, fn = obj$fn, 
+                                                                     gr = obj$gr)
+                                                      optim$par <- optim$par - solve(h, g)
+                                                      optim$objective <- obj$fn(optim$par)
+                                                    }
+                                                  }, error = function(e) e, warning = function(w) w)
+                                                  obj$rep <- obj$report(obj$env$last.par.best)
+                                                  obj$sd_rep <- RTMB::sdreport(obj)
+                                                  plr1 <- as.list(obj$sd_rep, "Est", report=TRUE)
+                                                  jitter_ts_df <- data.frame(
+                                                    Year = data$years,
+                                                    SSB = as.numeric(plr1$SSB),
+                                                    Rec = as.numeric(plr1$Rec))
+                                                  jitter_ts_df$jitter  <-  i
+                                                  jitter_ts_df$Hessian  <-  obj$sd_rep$pdHess
+                                                  jitter_ts_df$jnLL  <-  optim$objective
+                                                  jitter_ts_df$Max_Gradient <-  max(abs(obj$sd_rep$gradient.fixed))
+                                                  p()
+                                                  jitter_ts_df
+                                                }, future.seed = TRUE) %>% bind_rows()
+      future::plan(future::sequential)
+    })
+  }
+  return(jitter_all)
+}
+
+jit <- do_jitter1(data = dat, parameters = par, mapping = mapping, random = "RecDevs", 
+           sd = 0.2, n_jitter = 50, n_newton_loops = 1, do_par = TRUE, n_cores = 6)
+str(jit)
+write.table(jit,"outputs/jitter_results.txt", row.names = FALSE, sep = "\t", col.names = TRUE)
+table(round(jit$jnLL, 3))
+sum(jit$Hessian == FALSE)
+range(jit$jnLL)
+
 #### likelihood profiles (M and h) ####
 #### retrospective ####
 #### hindcast ####
@@ -280,11 +378,11 @@ plr_se <- as.list(sdrep, "Std. Error", report = TRUE)
 # 3 panel catch, index fit and lengths fit
 {
   #x11()
-  #pdf("figures/model_fits.pdf", width = 8, height = 11)
+  #pdf("outputs/model_fits.pdf", width = 8, height = 11)
   wd <- 3000
   ht <- 4000
   re <- 300
-  png("figures/model_fits.png", width = wd, height = ht, res = re)
+  png("outputs/model_fits.png", width = wd, height = ht, res = re)
   par(mfrow = c(3, 1), mar = c(4, 4, 2, 1))
   # catch timeseries
   plot(dat$years, dat$catch, pch = 20, type = "h",lwd = 10,
@@ -317,11 +415,11 @@ plr_se <- as.list(sdrep, "Std. Error", report = TRUE)
 # 2 panel catch residuals and index residuals
 { 
   #x11()
-  #pdf("figures/residuals_plots.pdf", width = 8, height = 8)
+  #pdf("outputs/residuals_plots.pdf", width = 8, height = 8)
   wd <- 3000
   ht <- 4000
   re <- 300
-  png("figures/residuals_plots.png", width = wd, height = ht, res = re)
+  png("outputs/residuals_plots.png", width = wd, height = ht, res = re)
   par(mfrow=c(2,1))
   
   # catch residuals
@@ -345,7 +443,7 @@ plr_se <- as.list(sdrep, "Std. Error", report = TRUE)
   ht <- 3000
   re <- 300
   #x11()
-  png("figures/results_2x2.png", width = wd, height = ht, res = 300)
+  png("outputs/results_2x2.png", width = wd, height = ht, res = 300)
   par(mfrow=c(2,2))
   plot(dat$years,plr$B, ylim = c(0,max(plr$B + 1.96 * plr_se$B)), pch=20,
        ylab = "Biomass (t)", main = "Total Biomass")
@@ -372,7 +470,21 @@ plr_se <- as.list(sdrep, "Std. Error", report = TRUE)
 
 }
 
-
+# Jitter analysis
+{
+  wd <- 4000
+  ht <- 3000
+  re <- 300
+  png("outputs/jitter.png", width = wd, height = ht, res = 300)
+  plot(jit$jitter, jit$jnLL, pch=20, col=ifelse(jit$jnLL > (min(jit$jnLL*1.05)), "darkred", "darkblue"),
+       xlab = "Jitter run", ylab = "Negative log likelihood value",
+       ylim = c(min(jit$jnLL) - 0.01, median(jit$jnLL) + 0.01),
+       main = "Jitter NLL Distribution"); abline(h=mean(jit$jnLL))
+  legend("topright", legend = c("Converged (Optimal)", "Local minimum (Outlier)", "Mean NLL"), 
+         col = c("darkblue", "darkred", "black"), 
+         pch = c(20, 20, NA), lty = c(NA, NA, 1), bty = "n")
+  graphics.off()
+}
 
 
 
