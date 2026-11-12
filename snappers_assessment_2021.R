@@ -3,6 +3,7 @@ library(RTMB)
 library(SPoRC)
 library(scales)
 library(dplyr)
+library(parallel)
 #### data preparation ####
 cat <- read.csv("data/analis.sc1.csv")
 ind <- read.csv("data/analis.index.csv")
@@ -257,9 +258,10 @@ nll <- function(par){
 #### model fitting and quick diags ####
 {starttime <- Sys.time()
 mapping <- list(M=factor(NA), h=factor(NA))
-obj <- MakeADFun(nll,par, random = "RecDevs", map = mapping)
+random <- "RecDevs"
+obj <- MakeADFun(nll,par, random = random, map = mapping, silent = TRUE)
 fit <- nlminb(obj$par,obj$fn,obj$gr)
-sdrep <- sdreport(obj)
+sdrep <- sdreport(obj, silent = TRUE)
 endtime <- Sys.time()
 runtime <- endtime-starttime
 round(runtime,2)}
@@ -275,8 +277,8 @@ plr_se <- as.list(sdrep, "Std. Error", report = TRUE)
 
 #### jitter analysis ####
 # adapting do_jitter() function from SPoRC package
-do_jitter1 <- function (data, parameters, mapping, random = NULL, sd, n_jitter, 
-          n_newton_loops, do_par, n_cores, par_vec = NULL) 
+do_jitter1 <- function (data, parameters, mapping, random = NULL, sd, n_jitter,
+                        n_newton_loops, do_par, n_cores, par_vec = NULL) 
 {
   jitter_all <- data.frame()
   obj <- RTMB::MakeADFun(func = nll, parameters = parameters, 
@@ -361,16 +363,182 @@ do_jitter1 <- function (data, parameters, mapping, random = NULL, sd, n_jitter,
   }
   return(jitter_all)
 }
-
-jit <- do_jitter1(data = dat, parameters = par, mapping = mapping, random = "RecDevs", 
-           sd = 0.2, n_jitter = 50, n_newton_loops = 1, do_par = TRUE, n_cores = 6)
+n_cores <- 6; sd <- 0.2; n_jitter <- 50
+jit <- do_jitter1(data = dat, parameters = par, mapping = mapping, random = random, 
+           sd = sd, n_jitter = n_jitter, n_newton_loops = 1, do_par = TRUE, n_cores = n_cores)
 str(jit)
-write.table(jit,"outputs/jitter_results.txt", row.names = FALSE, sep = "\t", col.names = TRUE)
 table(round(jit$jnLL, 3))
 sum(jit$Hessian == FALSE)
 range(jit$jnLL)
+saveRDS(jit, "outputs/jitter_results.rds")
 
 #### likelihood profiles (M and h) ####
+# adapting do_likelihood_profile() function from SPoRC package
+do_likelihood_profile1 <- function (data, parameters, mapping, random = NULL, what, idx = NULL, 
+                                    min_val, max_val, inc = 0.05, do_par = TRUE, n_cores = NULL) 
+{
+  if (min_val > max_val) {
+    stop("`min_val` is greater than `max_val`. This likely occurred because you are profiling a log-transformed parameter. 
+         Try swapping the values: use the current `min_val` as `max_val`, and vice versa.")
+  }
+  vals <- seq(min_val, max_val, inc)
+  jnLL <- matrix(NA, nrow = length(vals), ncol = 1, dimnames = list(vals, 
+                                                                    NULL))
+  rec_nLL <- matrix(NA, nrow = length(vals), ncol = 1, dimnames = list(vals, 
+                                                                       NULL))
+  Catch_nLL <- matrix(NA, nrow = length(vals), ncol = 1, dimnames = list(vals, 
+                                                                         NULL))
+  FishLen_nLL <- matrix(NA, nrow = length(vals), ncol = 1, dimnames = list(vals, 
+                                                                           NULL))
+  FishIdx_nLL <- matrix(NA, nrow = length(vals), ncol = 1, dimnames = list(vals, 
+                                                                           NULL))
+  if (do_par == FALSE) {
+    for (j in 1:length(vals)) {
+      if (!is.null(dim(parameters[[what]]))) {
+        parameters[[what]] <- do.call(`[<-`, c(list(parameters[[what]]), 
+                                               idx, list(vals[j])))
+        counter <- 1
+        map_parameter <- do.call(`[<-`, c(list(parameters[[what]]), 
+                                          idx, list(NA)))
+        non_na <- which(!is.na(map_parameter))
+        for (i in 1:length(non_na)) {
+          map_parameter[non_na[i]] <- counter
+          counter <- counter + 1
+        }
+        mapping[[what]] <- factor(map_parameter)
+      }else {
+        parameters[[what]] <- vals[j]
+        mapping[[what]] <- factor(NA)
+      }
+      SPoRC_rtmb_model <- RTMB::MakeADFun(func = nll 
+                                          , parameters = parameters, map = mapping, 
+                                          random = random, silent = TRUE)
+      tryCatch({
+        SPoRC_optim <- stats::nlminb(SPoRC_rtmb_model$par, 
+                                     SPoRC_rtmb_model$fn, SPoRC_rtmb_model$gr)#, control = list(iter.max = 1e+06, 
+        #               eval.max = 1e+06, rel.tol = 1e-15))
+        #report <- SPoRC_rtmb_model$report(SPoRC_rtmb_model$env$last.par.best)
+        SPoRC_rtmb_model$sd_rep <- RTMB::sdreport(SPoRC_rtmb_model)
+        plr1 <- as.list(SPoRC_rtmb_model$sd_rep, "Est", report=TRUE)
+        jnLL[j, 1] <- plr1$ret
+        rec_nLL[j, 1] <- plr1$nll.recdevs
+        Catch_nLL[j, 1] <- plr1$nll.catch
+        FishLen_nLL[j, 1] <- plr1$nll.length
+        FishIdx_nLL[j, 1] <- plr1$nll.index
+        
+        print(paste("Likelihood profile is at:", round(j/length(vals) * 
+                                                         100, 2), "%"))
+      }, error = function(e) {
+        message("Failed to optimize: ", e$message)
+      })
+    }
+  }
+  if (do_par == TRUE) {
+    future::plan(future::multisession, workers = n_cores)
+    progressr::with_progress({
+      p <- progressr::progressor(along = 1:length(vals))
+      profile_results <- future.apply::future_lapply(1:length(vals), 
+                                                     function(j) {
+                                                       local_parameters <- parameters
+                                                       local_mapping <- mapping
+                                                       result <- list(j = j, prof_val = vals[j], success = FALSE, 
+                                                                      jnLL = NA, rec_nLL = NA, Catch_nLL = data.frame(),
+                                                                      FishLen_nLL = data.frame(), FishIdx_nLL = data.frame())
+                                                       if (!is.null(dim(local_parameters[[what]]))) {
+                                                         local_parameters[[what]] <- do.call(`[<-`, 
+                                                                                             c(list(local_parameters[[what]]), idx, 
+                                                                                               list(vals[j])))
+                                                         counter <- 1
+                                                         map_parameter <- do.call(`[<-`, c(list(local_parameters[[what]]), 
+                                                                                           idx, list(NA)))
+                                                         non_na <- which(!is.na(map_parameter))
+                                                         for (i in 1:length(non_na)) {
+                                                           map_parameter[non_na[i]] <- counter
+                                                           counter <- counter + 1
+                                                         }
+                                                         local_mapping[[what]] <- factor(map_parameter)
+                                                       } else {
+                                                         local_parameters[[what]] <- vals[j]
+                                                         local_mapping[[what]] <- factor(NA)
+                                                       }
+                                                       tryCatch({
+                                                         SPoRC_rtmb_model <- RTMB::MakeADFun(func = nll 
+                                                                                             , parameters = local_parameters, 
+                                                                                             map = local_mapping, 
+                                                                                             random = random, silent = TRUE)
+                                                         SPoRC_optim <- stats::nlminb(SPoRC_rtmb_model$par, 
+                                                                                      SPoRC_rtmb_model$fn, SPoRC_rtmb_model$gr)
+                                                         #report <- SPoRC_rtmb_model$report(SPoRC_rtmb_model$env$last.par.best)
+                                                         SPoRC_rtmb_model$sd_rep <- RTMB::sdreport(SPoRC_rtmb_model)
+                                                         plr1 <- as.list(SPoRC_rtmb_model$sd_rep, "Est", report=TRUE)
+                                                         result$jnLL <- plr1$ret
+                                                         result$rec_nLL <- plr1$nll.recdevs
+                                                         result$Catch_nLL <- plr1$nll.catch
+                                                         result$FishLen_nLL <- plr1$nll.length
+                                                         result$FishIdx_nLL <- plr1$nll.index
+                                                         result$success <- TRUE
+                                                       }, error = function(e) {
+                                                         result$error_msg <- e$message
+                                                       })
+                                                       p(sprintf("j=%g", j))
+                                                       return(result)
+                                                     }, future.seed = TRUE)
+    })
+    for (result in profile_results) {
+      if (result$success) {
+        j <- result$j
+        jnLL[j, 1] <- result$jnLL
+        rec_nLL[j, 1] <- result$rec_nLL
+        Catch_nLL[j, 1] <- result$Catch_nLL
+        FishLen_nLL[j, 1] <- result$FishLen_nLL
+        FishIdx_nLL[j, 1] <- result$FishIdx_nLL
+      }
+      else {
+        message("Failed iteration ", result$j, " (value = ", 
+                result$prof_val, "): ", result$error_msg)
+      }
+    }
+    future::plan(future::sequential)
+    message("Parallel processing completed.")
+  }
+  jnLL_df <- reshape2::melt(jnLL) %>% dplyr::select(-Var2) %>% 
+    dplyr::rename(prof_val = Var1) %>% dplyr::mutate(type = "jnLL")
+  rec_nLL_df <- reshape2::melt(rec_nLL) %>% dplyr::select(-Var2) %>% 
+    dplyr::rename(prof_val = Var1) %>% dplyr::mutate(type = "RecPen")
+  Catch_nLL_df <- reshape2::melt(Catch_nLL) %>% dplyr::select(-Var2) %>% 
+    dplyr::rename(prof_val = Var1) %>% dplyr::mutate(type = "Catch")
+  FishLen_nLL_df <- reshape2::melt(FishLen_nLL) %>% dplyr::select(-Var2) %>% 
+    dplyr::rename(prof_val = Var1) %>% dplyr::mutate(type = "FishLen")
+  FishIdx_nLL_df <- reshape2::melt(FishIdx_nLL) %>% dplyr::select(-Var2) %>% 
+    dplyr::rename(prof_val = Var1) %>% dplyr::mutate(type = "FishIdx")
+  
+  profile_list <- list(jnLL_df = jnLL_df, rec_nLL_df = rec_nLL_df, 
+                       Catch_nLL_df = Catch_nLL_df, FishLen_nLL_df = FishLen_nLL_df, 
+                       FishIdx_nLL_df = FishIdx_nLL_df)
+  return(profile_list)
+}
+
+what <- c("M","h"); min_val <- c(0.15,0.5); max_val <- c(0.25,0.9); inc <- c(0.01,0.05); n_cores <- 6
+profiles <- list()
+
+for (i in 1:length(what)) {
+  cat("Profiling", what[i], "\n")
+
+  profiles[[what[i]]] <- do_likelihood_profile1(data = dat,
+                                                parameters = par,
+                                                mapping = mapping,
+                                                random = random,
+                                                what = what[i],
+                                                min_val = min_val[i],
+                                                max_val = max_val[i],
+                                                inc = inc[i],
+                                                do_par = TRUE,
+                                                n_cores = n_cores
+  )
+}
+
+saveRDS(profiles,"outputs/likelihood_profiles.rds")
+
 #### retrospective ####
 #### hindcast ####
 #### plots ####
@@ -486,21 +654,66 @@ range(jit$jnLL)
   graphics.off()
 }
 
+# likelihood profiles
+{
+  if(length(profiles)>=2){
+    wd <- 4000
+    ht <- 3000
+    re <- 300
+    for (i in 1:length(profiles)) {
+      png(paste0("outputs/likelihood_profiles_",
+                 ifelse(i==1,"NatM","Steepbh"),".png"), width = wd, height = ht, res = 300)
+      
+      plot(as.numeric(seq(min_val[[i]], max_val[[i]], inc[[i]])),
+           profiles[[i]]$jnLL_df$value - min(profiles[[i]]$jnLL_df$value), 
+           type = "b", pch = 19, lwd = 2, col = "black", cex = 0.8,
+           ylim = c(0, max(profiles[[i]]$jnLL_df$value - min(profiles[[i]]$jnLL_df$value),
+                           profiles[[i]]$Catch_nLL_df$value - min(profiles[[i]]$Catch_nLL_df$value),
+                           profiles[[i]]$FishLen_nLL_df$value - min(profiles[[i]]$FishLen_nLL_df$value),
+                           profiles[[i]]$FishIdx_nLL_df$value - min(profiles[[i]]$FishIdx_nLL_df$value),
+                           profiles[[i]]$rec_nLL_df$value - min(profiles[[i]]$rec_nLL_df$value)) * 1.1),
+           xlab = ifelse(i==1,"Natural Mortality (M)","Steepness (h)"),
+           ylab = expression(Delta ~ "Negative Log-Likelihood"),
+           main = "Likelihood Profile Components")
+      
+      lines(seq(min_val[[i]], max_val[[i]], inc[[i]]), profiles[[i]]$Catch_nLL_df$value - min(profiles[[i]]$Catch_nLL_df$value), type = "b", pch = 16, col = "red", cex = 0.8, lty = 2)
+      lines(seq(min_val[[i]], max_val[[i]], inc[[i]]), profiles[[i]]$FishLen_nLL_df$value - min(profiles[[i]]$FishLen_nLL_df$value),   type = "b", pch = 17, col = "blue", cex = 0.8, lty = 2)
+      lines(seq(min_val[[i]], max_val[[i]], inc[[i]]), profiles[[i]]$FishIdx_nLL_df$value - min(profiles[[i]]$FishIdx_nLL_df$value),   type = "b", pch = 18, col = "green4", cex = 0.8, lty = 2)
+      lines(seq(min_val[[i]], max_val[[i]], inc[[i]]), profiles[[i]]$rec_nLL_df$value - min(profiles[[i]]$rec_nLL_df$value),   type = "b", pch = 15, col = "orange", cex = 0.8, lty = 2)
+  
+      legend("topright", legend = c("Total", "Catch", "Length", "Index", "RecDevs"),
+             col = c("black", "red", "blue", "green4", "orange"),
+             pch = c(19, 16, 17, 18, 15), lty = c(1, 2, 2, 2, 2), cex = 0.8, bty = "n")
+    
+      graphics.off()
+    }
+  }else{
+    png(paste0("outputs/likelihood_profiles_",
+               ifelse(names(profiles[1])=="M","NatM","Steepbh"),".png"), width = wd, height = ht, res = 300)
+    ifelse(names(profiles[1])=="M",j <- 1,j <- 2); p=1
+    plot(as.numeric(seq(min_val[[j]], max_val[[j]], inc[[j]])),
+         profiles[[p]]$jnLL_df$value - min(profiles[[p]]$jnLL_df$value),
+         type = "b", pch = 19, lwd = 2, col = "black", cex = 0.8,
+         ylim = c(0, max(profiles[[p]]$jnLL_df$value - min(profiles[[p]]$jnLL_df$value),
+                         profiles[[p]]$Catch_nLL_df$value - min(profiles[[p]]$Catch_nLL_df$value),
+                         profiles[[p]]$FishLen_nLL_df$value - min(profiles[[p]]$FishLen_nLL_df$value),
+                         profiles[[p]]$FishIdx_nLL_df$value - min(profiles[[p]]$FishIdx_nLL_df$value),
+                         profiles[[p]]$rec_nLL_df$value - min(profiles[[p]]$rec_nLL_df$value)) * 1.1),
+         xlab = ifelse(j==1,"Natural Mortality (M)","Steepness (h)"),
+         ylab = expression(Delta ~ "Negative Log-Likelihood"),
+         main = "Likelihood Profile Components")
+    
+    lines(seq(min_val[[j]], max_val[[j]], inc[[j]]), profiles[[p]]$Catch_nLL_df$value - min(profiles[[p]]$Catch_nLL_df$value), type = "b", pch = 16, col = "red", cex = 0.8, lty = 2)
+    lines(seq(min_val[[j]], max_val[[j]], inc[[j]]), profiles[[p]]$FishLen_nLL_df$value - min(profiles[[p]]$FishLen_nLL_df$value),   type = "b", pch = 17, col = "blue", cex = 0.8, lty = 2)
+    lines(seq(min_val[[j]], max_val[[j]], inc[[j]]), profiles[[p]]$FishIdx_nLL_df$value - min(profiles[[p]]$FishIdx_nLL_df$value),   type = "b", pch = 18, col = "green4", cex = 0.8, lty = 2)
+    lines(seq(min_val[[j]], max_val[[j]], inc[[j]]), profiles[[p]]$rec_nLL_df$value - min(profiles[[p]]$rec_nLL_df$value),   type = "b", pch = 15, col = "orange", cex = 0.8, lty = 2)
+    
+    legend("topright", legend = c("Total", "Catch", "Length", "Index", "RecDevs"),
+           col = c("black", "red", "blue", "green4", "orange"),
+           pch = c(19, 16, 17, 18, 15), lty = c(1, 2, 2, 2, 2), cex = 0.8, bty = "n")
+    
+    graphics.off()
+  }
+}
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+#####
