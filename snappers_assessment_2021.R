@@ -55,6 +55,13 @@ par <- list(
   M=inputs$M_f_fix
 )
 
+stk <- "Lutjanus_analis_ME_NE" ##### name of stock
+
+outputs <- paste0(getwd(),"/outputs/")
+outdir <- paste0(outputs,stk)
+dir.create(outputs)
+dir.create(outdir)
+
 #### adapted functions from SPoRC ####
 ## RPS
 Get_Reference_Points1 <- function (data, rep, SPR_x = NULL, t_spwn = 0,sex_ratio_f = 0.5, calc_rec_st_yr = 1, 
@@ -73,21 +80,13 @@ Get_Reference_Points1 <- function (data, rep, SPR_x = NULL, t_spwn = 0,sex_ratio
     n_ages <- length(data$ages)
     n_years <- length(data$years)
     data_list$t_spwn <- t_spwn
-    data_list$F_fract_flt <- 1#rep$F[1, n_years, ]/sum(rep$F[1, 
-    #                                    n_years, ])
-    fish_sel_avg <- rep$Sa#apply(rep$fish_sel[, avg_yrs, , 1, , 
-    #            drop = FALSE], c(1, 3, 4, 5), mean)
+    data_list$F_fract_flt <- 1
+    fish_sel_avg <- rep$Sa
     data_list$fish_sel <- array(fish_sel_avg, dim = c(n_ages, 
                                                       data$n_fish_fleets))
-    natmort_avg <- #apply(rep$natmort[, avg_yrs, , 1, drop = FALSE], 
-      #c(1, 3, 4), mean)
-      data_list$natmort <- as.vector(M)
-    #WAA_avg <- apply(data$WAA[, avg_yrs, , 1, drop = FALSE], 
-    #                 c(1, 3, 4), mean)
+    natmort_avg <- data_list$natmort <- as.vector(M)
     data_list$WAA <- rep$Wa
-    #MatAA_avg <- apply(data$MatAA[, avg_yrs, , 1, drop = FALSE], 
-    #     c(1, 3, 4), mean)
-    data_list$MatAA <- rep$Mata#MatAA_avg
+    data_list$MatAA <- rep$Mata
     data_list$sex_ratio_f <- sex_ratio_f
     
     single_region_SPR1 <- function (par_list){
@@ -333,9 +332,8 @@ do_likelihood_profile1 <- function (data, parameters, mapping, random = NULL, wh
                                           random = random, silent = TRUE)
       tryCatch({
         SPoRC_optim <- stats::nlminb(SPoRC_rtmb_model$par, 
-                                     SPoRC_rtmb_model$fn, SPoRC_rtmb_model$gr)#, control = list(iter.max = 1e+06, 
-        #               eval.max = 1e+06, rel.tol = 1e-15))
-        #report <- SPoRC_rtmb_model$report(SPoRC_rtmb_model$env$last.par.best)
+                                     SPoRC_rtmb_model$fn, SPoRC_rtmb_model$gr)
+        
         SPoRC_rtmb_model$sd_rep <- RTMB::sdreport(SPoRC_rtmb_model)
         plr1 <- as.list(SPoRC_rtmb_model$sd_rep, "Est", report=TRUE)
         jnLL[j, 1] <- plr1$ret
@@ -386,7 +384,6 @@ do_likelihood_profile1 <- function (data, parameters, mapping, random = NULL, wh
                                                                                              random = random, silent = TRUE)
                                                          SPoRC_optim <- stats::nlminb(SPoRC_rtmb_model$par, 
                                                                                       SPoRC_rtmb_model$fn, SPoRC_rtmb_model$gr)
-                                                         #report <- SPoRC_rtmb_model$report(SPoRC_rtmb_model$env$last.par.best)
                                                          SPoRC_rtmb_model$sd_rep <- RTMB::sdreport(SPoRC_rtmb_model)
                                                          plr1 <- as.list(SPoRC_rtmb_model$sd_rep, "Est", report=TRUE)
                                                          result$jnLL <- plr1$ret
@@ -435,6 +432,161 @@ do_likelihood_profile1 <- function (data, parameters, mapping, random = NULL, wh
                        FishIdx_nLL_df = FishIdx_nLL_df)
   return(profile_list)
 }
+
+## retrospective
+do_retrospective1 <- function (n_retro, data, parameters, mapping, random = NULL, do_par=FALSE, 
+                               n_cores, newton_loops = 6, do_francis = FALSE, n_francis_iter = NULL,
+                               do_sdrep = TRUE) 
+{
+  
+  truncate_yr <- function (j, data, parameters, mapping)
+  {
+    retro_data <- data
+    retro_parameters <- parameters
+    retro_mapping <- mapping
+    
+    retro_data$years <- data$years[1:(length(data$years) - j)]
+    
+    retro_parameters$RecDevs <- retro_parameters$RecDevs <- parameters$RecDevs[1:(length(parameters$RecDevs) - j)]
+    
+    if (any(names(retro_mapping) == "RecDevs")) {
+      retro_mapping$RecDevs <- parameters$RecDevs[1:(length(parameters$RecDevs) - j)]}
+    
+    retro_data$catch <- data$catch[1:(length(data$catch) - j)]
+    
+    retro_data$index.yrs <- data$index.yrs[data$index.yrs<=max(retro_data$years)]
+    retro_data$index.obs <- data$index.obs[data$index.yrs<=max(retro_data$years)]
+    retro_data$index.idx <- match(retro_data$index.yrs, retro_data$years)
+    
+    retro_data$length.yrs <- data$length.yrs[data$length.yrs<=max(retro_data$years)]
+    retro_data$length.obs <- data$length.obs[data$length.yrs<=max(retro_data$years),,drop=FALSE]
+    retro_data$length.nsamps <- data$length.nsamps[data$length.yrs<=max(retro_data$years)]
+    retro_data$length.idx <- match(retro_data$length.yrs, retro_data$years) 
+    
+    retro_parameters$logF <- parameters$logF[1:(length(data$years) - j)]
+    
+    retro_parameters$logq <- parameters$logq
+    
+    return(list(retro_data = retro_data, retro_parameters = retro_parameters, 
+                retro_mapping = retro_mapping))
+  }
+  
+  fit_model <- function (data, parameters, mapping, random = NULL, newton_loops = 3, 
+                         silent = TRUE, do_optim = TRUE) 
+  {
+    
+    retro_env <- new.env(parent = environment(nll))
+    retro_env$dat <- data
+    
+    nll_retro <- nll
+    environment(nll_retro) <- retro_env
+    
+    obj <- RTMB::MakeADFun(func=nll_retro, parameters = parameters, 
+                           map = mapping, random = random, silent = silent)
+    if (do_optim == TRUE) {
+      optim <- stats::nlminb(obj$par, obj$fn, obj$gr)
+      try_improve <- tryCatch(expr = for (i in 1:newton_loops) {
+        g = as.numeric(obj$gr(optim$par))
+        h = optimHess(optim$par, fn = obj$fn, gr = obj$gr)
+        optim$par = optim$par - solve(h, g)
+        optim$objective = obj$fn(optim$par)
+      }, error = function(e) {
+        e
+      }, warning = function(w) {
+        w
+      })
+    }
+    obj$optim <- optim
+    obj$sd_rep <- sdreport(obj)
+    obj$rep <- as.list(obj$sd_rep, "Est", report=TRUE)
+    return(obj)
+  }
+  
+  if (do_par == FALSE) {
+    retro_all <- data.frame()
+    for (j in 0:n_retro) {
+      init <- truncate_yr(j = j, data = data, parameters = parameters, 
+                          mapping = mapping)
+      start_col <- length(init$retro_data$years)
+      if (do_francis == FALSE) {
+        SPoRC_rtmb_model <- fit_model(data = init$retro_data, 
+                                      parameters = init$retro_parameters, mapping = init$retro_mapping, 
+                                      random = random, newton_loops = newton_loops, 
+                                      silent = TRUE)
+        rep <- SPoRC_rtmb_model$rep
+      }
+      
+      retro_tmp <- data.frame(
+        Region = 1, 
+        Year = init$retro_data$years,
+        value = as.numeric(rep$SSB),
+        Type = "SSB",
+        peel = j
+      ) %>% 
+        bind_rows(
+          data.frame(
+            Region = 1,
+            Year = init$retro_data$years,
+            value = as.numeric(rep$Rec),
+            Type = "Recruitment",
+            peel = j
+          )
+        )
+      if (do_sdrep == TRUE) {
+        sdrep <- RTMB::sdreport(SPoRC_rtmb_model)
+        retro_tmp <- retro_tmp %>% dplyr::mutate(pdHess = sdrep$pdHess, 
+                                                 max_grad = max(abs(sdrep$gradient.fixed)))
+      }
+      retro_all <- rbind(retro_all, retro_tmp)
+    }
+  }
+  if (do_par == TRUE) {
+    future::plan(future::multisession, workers = n_cores)
+    progressr::with_progress({
+      p <- progressr::progressor(along = 0:n_retro)
+      retro_all <- future.apply::future_lapply(0:n_retro, 
+                                               function(j) {
+                                                 init <- truncate_yr(j = j, data = data, parameters = parameters, 
+                                                                     mapping = mapping)
+                                                 start_col <- length(init$retro_data$years)
+                                                 
+                                                 if (do_francis == FALSE) {
+                                                   SPoRC_rtmb_model <- fit_model(data = init$retro_data, 
+                                                                                 parameters = init$retro_parameters, mapping = init$retro_mapping, 
+                                                                                 random = random, newton_loops = newton_loops, 
+                                                                                 silent = TRUE)
+                                                   rep <- SPoRC_rtmb_model$rep
+                                                 }
+                                                 retro_tmp <- data.frame(
+                                                   Region = 1, 
+                                                   Year = init$retro_data$years,
+                                                   value = as.numeric(rep$SSB), # O pacote exige que a coluna se chame 'value'
+                                                   Type = "SSB",
+                                                   peel = j
+                                                 ) %>% 
+                                                   bind_rows(
+                                                     data.frame(
+                                                       Region = 1,
+                                                       Year = init$retro_data$years,
+                                                       value = as.numeric(rep$Rec),
+                                                       Type = "Recruitment",
+                                                       peel = j
+                                                     )
+                                                   )
+                                                 if (do_sdrep == TRUE) {
+                                                   sdrep <- RTMB::sdreport(SPoRC_rtmb_model)
+                                                   retro_tmp <- retro_tmp %>% dplyr::mutate(pdHess = sdrep$pdHess, 
+                                                                                            max_grad = max(abs(sdrep$gradient.fixed)))
+                                                 }
+                                                 p()
+                                                 retro_tmp
+                                               }, future.seed = TRUE) %>% bind_rows()
+      future::plan(future::sequential)
+    })
+  }
+  return(retro_all)
+}
+
 
 #### model configuration ####
 nll <- function(par){
@@ -662,25 +814,28 @@ SPR_RP <- Get_Reference_Points1(data = dat,rep = plr,SPR_x = 0.4, M = par$M, h_t
 
 saveRDS(list(BH_RP = BH_RP, SPR_RP = SPR_RP, fit=fit$par, 
              plr= plr[c("SSB", "Rec", "B", "F", "Bratio", "SSB0", "R0")],
-             plr_se= plr_se[c("SSB", "Rec", "B", "F", "Bratio", "SSB0", "R0")]), "outputs/outputs.rds")
+             plr_se= plr_se[c("SSB", "Rec", "B", "F", "Bratio", "SSB0", "R0")]), paste0(outdir,"/outputs.rds"))
 
 #### jitter analysis ####
 # adapting do_jitter() function from SPoRC package
 
 n_cores <- 6; sd <- 0.2; n_jitter <- 50
+starttime <- Sys.time()
 jit <- do_jitter1(data = dat, parameters = par, mapping = mapping, random = random, 
            sd = sd, n_jitter = n_jitter, n_newton_loops = 1, do_par = TRUE, n_cores = n_cores)
-str(jit)
+endtime <- Sys.time(); runtime <- endtime-starttime; round(runtime,2)
+
 table(round(jit$jnLL, 3))
 sum(jit$Hessian == FALSE)
 range(jit$jnLL)
-saveRDS(jit, "outputs/jitter_results.rds")
+
+saveRDS(list(jit,runtime), paste0(outdir,"/jitter_results.rds"))
 
 #### likelihood profiles (M and h) ####
 # adapting do_likelihood_profile() function from SPoRC package
 what <- c("M","h"); min_val <- c(0.15,0.5); max_val <- c(0.25,0.9); inc <- c(0.01,0.05); n_cores <- 6
 profiles <- list()
-
+starttime <- Sys.time()
 for (i in 1:length(what)) {
   cat("Profiling", what[i], "\n")
 
@@ -696,11 +851,22 @@ for (i in 1:length(what)) {
                                                 n_cores = n_cores
   )
 }
+endtime <- Sys.time(); runtime <- endtime-starttime; round(runtime,2)
 
-saveRDS(profiles,"outputs/likelihood_profiles.rds")
+saveRDS(list(profiles,runtime),paste0(outdir,"/likelihood_profiles.rds"))
 
 #### retrospective ####
-#### hindcast ####
+
+n_retro <- 5; n_cores <- 6
+starttime <- Sys.time()
+retro <- do_retrospective1(n_retro=n_retro, data=dat, parameters = par, mapping = mapping, random = random,do_par = TRUE, n_cores = n_cores)
+endtime <- Sys.time(); runtime <- endtime-starttime; round(runtime,2)
+
+unique(retro$peel) 
+retro_diff <- as.data.frame(SPoRC::get_retrospective_relative_difference(retro))
+
+saveRDS(list(retro,retro_diff, runtime), paste0(outdir,"/retrospective.rds"))
+
 #### plots ####
 
 # 3 panel catch, index fit and lengths fit
@@ -747,7 +913,7 @@ saveRDS(profiles,"outputs/likelihood_profiles.rds")
   wd <- 3000
   ht <- 4000
   re <- 300
-  png("outputs/residuals_plots.png", width = wd, height = ht, res = re)
+  png(paste0(outdir,"/residuals_plots.png"), width = wd, height = ht, res = re)
   par(mfrow=c(2,1))
   
   # catch residuals
@@ -771,7 +937,7 @@ saveRDS(profiles,"outputs/likelihood_profiles.rds")
   ht <- 3000
   re <- 300
   #x11()
-  png("outputs/results_2x2.png", width = wd, height = ht, res = 300)
+  png(paste0(outdir,"/results_2x2.png"), width = wd, height = ht, res = 300)
   par(mfrow=c(2,2))
   plot(dat$years,plr$B, ylim = c(0,max(plr$B + 1.96 * plr_se$B)), pch=20,
        xlab = "Year",ylab = "Biomass (t)", main = "Total Biomass")
@@ -806,7 +972,7 @@ saveRDS(profiles,"outputs/likelihood_profiles.rds")
   wd <- 4000
   ht <- 3000
   re <- 300
-  png("outputs/jitter.png", width = wd, height = ht, res = 300)
+  png(paste0(outdir,"/jitter.png"), width = wd, height = ht, res = 300)
   plot(jit$jitter, jit$jnLL, pch=20, col=ifelse(jit$jnLL > (min(jit$jnLL*1.05)), "darkred", "darkblue"),
        xlab = "Jitter run", ylab = "Negative log likelihood value",
        ylim = c(min(jit$jnLL) - 0.01, median(jit$jnLL) + 0.01),
@@ -824,7 +990,7 @@ saveRDS(profiles,"outputs/likelihood_profiles.rds")
     ht <- 3000
     re <- 300
     for (i in 1:length(profiles)) {
-      png(paste0("outputs/likelihood_profiles_",
+      png(paste0(outdir,"/likelihood_profiles_",
                  ifelse(i==1,"NatM","Steepbh"),".png"), width = wd, height = ht, res = 300)
       
       plot(as.numeric(seq(min_val[[i]], max_val[[i]], inc[[i]])),
@@ -843,7 +1009,8 @@ saveRDS(profiles,"outputs/likelihood_profiles.rds")
       lines(seq(min_val[[i]], max_val[[i]], inc[[i]]), profiles[[i]]$FishLen_nLL_df$value - min(profiles[[i]]$FishLen_nLL_df$value),   type = "b", pch = 17, col = "blue", cex = 0.8, lty = 2)
       lines(seq(min_val[[i]], max_val[[i]], inc[[i]]), profiles[[i]]$FishIdx_nLL_df$value - min(profiles[[i]]$FishIdx_nLL_df$value),   type = "b", pch = 18, col = "green4", cex = 0.8, lty = 2)
       lines(seq(min_val[[i]], max_val[[i]], inc[[i]]), profiles[[i]]$rec_nLL_df$value - min(profiles[[i]]$rec_nLL_df$value),   type = "b", pch = 15, col = "orange", cex = 0.8, lty = 2)
-  
+      abline(h = 1.92, col = "gray40", lty = 2, lwd = 1.5)
+      
       legend("topright", legend = c("Total", "Catch", "Length", "Index", "RecDevs"),
              col = c("black", "red", "blue", "green4", "orange"),
              pch = c(19, 16, 17, 18, 15), lty = c(1, 2, 2, 2, 2), cex = 0.8, bty = "n")
@@ -851,7 +1018,7 @@ saveRDS(profiles,"outputs/likelihood_profiles.rds")
       graphics.off()
     }
   }else{
-    png(paste0("outputs/likelihood_profiles_",
+    png(paste0(outdir,"/likelihood_profiles_",
                ifelse(names(profiles[1])=="M","NatM","Steepbh"),".png"), width = wd, height = ht, res = 300)
     ifelse(names(profiles[1])=="M",j <- 1,j <- 2); p=1
     plot(as.numeric(seq(min_val[[j]], max_val[[j]], inc[[j]])),
@@ -866,6 +1033,7 @@ saveRDS(profiles,"outputs/likelihood_profiles.rds")
          ylab = expression(Delta ~ "Negative Log-Likelihood"),
          main = "Likelihood Profile Components")
     
+    abline(h = 1.92, col = "gray40", lty = 2, lwd = 1.5)
     lines(seq(min_val[[j]], max_val[[j]], inc[[j]]), profiles[[p]]$Catch_nLL_df$value - min(profiles[[p]]$Catch_nLL_df$value), type = "b", pch = 16, col = "red", cex = 0.8, lty = 2)
     lines(seq(min_val[[j]], max_val[[j]], inc[[j]]), profiles[[p]]$FishLen_nLL_df$value - min(profiles[[p]]$FishLen_nLL_df$value),   type = "b", pch = 17, col = "blue", cex = 0.8, lty = 2)
     lines(seq(min_val[[j]], max_val[[j]], inc[[j]]), profiles[[p]]$FishIdx_nLL_df$value - min(profiles[[p]]$FishIdx_nLL_df$value),   type = "b", pch = 18, col = "green4", cex = 0.8, lty = 2)
@@ -879,4 +1047,28 @@ saveRDS(profiles,"outputs/likelihood_profiles.rds")
   }
 }
 
-#####
+##### retrospective
+{
+  wd <- 6000
+  ht <- 4000
+  re <- 300
+  png(paste0(outdir,"/retrospective.png"), width = wd, height = ht, res = 300)
+  Rmisc::multiplot(cols = 1,
+                   #SPoRC::get_retrospective_plot(retro, Rec_Age = 1)[[1]],
+                   SPoRC::get_retrospective_plot(retro, Rec_Age = 1)[[2]]#,
+                   #SPoRC::get_retrospective_plot(retro, Rec_Age = 1)[[3]]
+                   )
+  graphics.off()
+}
+
+####  ####
+("End of script")
+
+
+
+
+
+
+
+
+
