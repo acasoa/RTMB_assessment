@@ -5,12 +5,12 @@ library(scales)
 library(dplyr)
 library(parallel)
 #### data preparation ####
-cat <- read.csv("data/analis.sc1.csv")
-ind <- read.csv("data/analis.index.csv")
-len <- read.csv("data/analis.LenComp.csv", header = FALSE)
+cat <- read.csv("data/chrysurus.sc1.csv")
+ind <- read.csv("data/chrysurus.index.csv")
+len <- read.csv("data/chrysurus.LenComp.csv", header = FALSE)
 colnames(len) <- as.character(len[1,])
 len <- len[-1,]
-inputs <- readRDS(paste0(getwd(),"/data/input.rds"))
+inputs <- readRDS(paste0(getwd(),"/data/chrysurus.input.rds"))
 
 dat <- list(
   years=as.vector(cat$Year),
@@ -55,7 +55,7 @@ par <- list(
   M=inputs$M_f_fix
 )
 
-stk <- "Lutjanus_analis_ME_NE" ##### name of stock
+stk <- "Ocyurus_chrysurus_ME_NE" ##### name of stock
 
 outputs <- paste0(getwd(),"/outputs/")
 outdir <- paste0(outputs,stk)
@@ -817,7 +817,6 @@ saveRDS(list(BH_RP = BH_RP, SPR_RP = SPR_RP, fit=fit$par,
              plr_se= plr_se[c("SSB", "Rec", "B", "F", "Bratio", "SSB0", "R0")]), paste0(outdir,"/outputs.rds"))
 
 #### jitter analysis ####
-# adapting do_jitter() function from SPoRC package
 
 n_cores <- 6; sd <- 0.2; n_jitter <- 50
 starttime <- Sys.time()
@@ -832,8 +831,8 @@ range(jit$jnLL)
 saveRDS(list(jit,runtime), paste0(outdir,"/jitter_results.rds"))
 
 #### likelihood profiles (M and h) ####
-# adapting do_likelihood_profile() function from SPoRC package
-what <- c("M","h"); min_val <- c(0.15,0.5); max_val <- c(0.25,0.9); inc <- c(0.01,0.05); n_cores <- 6
+## change range of M based on your data
+what <- c("M","h"); min_val <- c(0.26,0.5); max_val <- c(0.34,0.9); inc <- c(0.01,0.05); n_cores <- 6
 profiles <- list()
 starttime <- Sys.time()
 for (i in 1:length(what)) {
@@ -876,7 +875,7 @@ saveRDS(list(retro,retro_diff, runtime), paste0(outdir,"/retrospective.rds"))
   wd <- 3000
   ht <- 4000
   re <- 300
-  png("outputs/model_fits.png", width = wd, height = ht, res = re)
+  png(paste0(outdir,"/model_fits.png"), width = wd, height = ht, res = re)
   par(mfrow = c(3, 1), mar = c(4, 4, 2, 1))
   # catch timeseries
   plot(dat$years, dat$catch, pch = 20, type = "h",lwd = 10,
@@ -885,7 +884,7 @@ saveRDS(list(retro,retro_diff, runtime), paste0(outdir,"/retrospective.rds"))
   # cpue residuals
   plot(dat$index.yrs, dat$index.obs, pch = 20,
        xlab = "Year", ylab = "Abundance index",
-       main = "Observed vs Predicted abundance index", ylim = c(0, 12))
+       main = "Observed vs Predicted abundance index")
   lines(dat$index.yrs, plr$IndexPred, col = "red", lwd = 2)
   legend("topright", legend = c("Observed", "Predicted"), 
          col = c("black", "red"), pch = c(20, NA), lty = c(NA, 1), lwd = c(NA, 2))
@@ -895,8 +894,7 @@ saveRDS(list(retro,retro_diff, runtime), paste0(outdir,"/retrospective.rds"))
        colSums(dat$length.obs)/sum(colSums(dat$length.obs)), 
        type = "h", lwd = 6, col = "gray70",
        xlab = "Length (cm)", ylab = "Proportion", 
-       main = "Aggregated Length Composition",
-       ylim = c(0, 0.05))
+       main = "Aggregated Length Composition")
   lines(dat$length.bins, 
         colSums(matrix(plr$Pmat, nrow = length(dat$length.idx),ncol = length(dat$length.bins))
                                  *dat$length.nsamps)/sum(dat$length.nsamps)
@@ -937,7 +935,7 @@ saveRDS(list(retro,retro_diff, runtime), paste0(outdir,"/retrospective.rds"))
   ht <- 3000
   re <- 300
   #x11()
-  png(paste0(outdir,"/results_2x2.png"), width = wd, height = ht, res = 300)
+  png(paste0(outdir,"/results_2x2.png"), width = wd, height = ht, res = re)
   par(mfrow=c(2,2))
   plot(dat$years,plr$B, ylim = c(0,max(plr$B + 1.96 * plr_se$B)), pch=20,
        xlab = "Year",ylab = "Biomass (t)", main = "Total Biomass")
@@ -972,7 +970,8 @@ saveRDS(list(retro,retro_diff, runtime), paste0(outdir,"/retrospective.rds"))
   wd <- 4000
   ht <- 3000
   re <- 300
-  png(paste0(outdir,"/jitter.png"), width = wd, height = ht, res = 300)
+  jit <- jit[!is.na(jit$jnLL),]
+  png(paste0(outdir,"/jitter.png"), width = wd, height = ht, res = re)
   plot(jit$jitter, jit$jnLL, pch=20, col=ifelse(jit$jnLL > (min(jit$jnLL*1.05)), "darkred", "darkblue"),
        xlab = "Jitter run", ylab = "Negative log likelihood value",
        ylim = c(min(jit$jnLL) - 0.01, median(jit$jnLL) + 0.01),
@@ -985,13 +984,13 @@ saveRDS(list(retro,retro_diff, runtime), paste0(outdir,"/retrospective.rds"))
 
 # likelihood profiles
 {
+  wd <- 4000
+  ht <- 3000
+  re <- 300
   if(length(profiles)>=2){
-    wd <- 4000
-    ht <- 3000
-    re <- 300
     for (i in 1:length(profiles)) {
       png(paste0(outdir,"/likelihood_profiles_",
-                 ifelse(i==1,"NatM","Steepbh"),".png"), width = wd, height = ht, res = 300)
+                 ifelse(i==1,"NatM","Steepbh"),".png"), width = wd, height = ht, res = re)
       
       plot(as.numeric(seq(min_val[[i]], max_val[[i]], inc[[i]])),
            profiles[[i]]$jnLL_df$value - min(profiles[[i]]$jnLL_df$value), 
@@ -1019,7 +1018,7 @@ saveRDS(list(retro,retro_diff, runtime), paste0(outdir,"/retrospective.rds"))
     }
   }else{
     png(paste0(outdir,"/likelihood_profiles_",
-               ifelse(names(profiles[1])=="M","NatM","Steepbh"),".png"), width = wd, height = ht, res = 300)
+               ifelse(names(profiles[1])=="M","NatM","Steepbh"),".png"), width = wd, height = ht, res = re)
     ifelse(names(profiles[1])=="M",j <- 1,j <- 2); p=1
     plot(as.numeric(seq(min_val[[j]], max_val[[j]], inc[[j]])),
          profiles[[p]]$jnLL_df$value - min(profiles[[p]]$jnLL_df$value),
@@ -1049,20 +1048,20 @@ saveRDS(list(retro,retro_diff, runtime), paste0(outdir,"/retrospective.rds"))
 
 ##### retrospective
 {
-  wd <- 6000
-  ht <- 4000
+  wd <- 7000
+  ht <- 8400
   re <- 300
-  png(paste0(outdir,"/retrospective.png"), width = wd, height = ht, res = 300)
+  png(paste0(outdir,"/retrospective.png"), width = wd, height = ht, res = re)
   Rmisc::multiplot(cols = 1,
-                   #SPoRC::get_retrospective_plot(retro, Rec_Age = 1)[[1]],
-                   SPoRC::get_retrospective_plot(retro, Rec_Age = 1)[[2]]#,
-                   #SPoRC::get_retrospective_plot(retro, Rec_Age = 1)[[3]]
+                   SPoRC::get_retrospective_plot(retro, Rec_Age = 1)[[1]],
+                   SPoRC::get_retrospective_plot(retro, Rec_Age = 1)[[2]],
+                   SPoRC::get_retrospective_plot(retro, Rec_Age = 1)[[3]]
                    )
   graphics.off()
 }
 
 ####  ####
-("End of script")
+paste0("End of ",stk, " assessment")
 
 
 
