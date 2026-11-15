@@ -27,14 +27,7 @@ The model successfully converged, demonstrating high agreement with the original
 **SS3 Baseline & Reproducibility:** 
 The original SS3 input files (`starter.ss`, `controlfile.ctl`, `datafile.dat`, `forecast.ss`) used for comparison are available in the `ss3_baseline/` folder.
 
-![Assessment Results](figures/results_2x2.png)
-
-## Development Journey
-This repository documents the step-by-step construction of the model through 11 versions, showing the debugging process of a bespoke assessment:
-1. **V1-V5:** Catch-only model, scale corrections, and addition of CPUE index.
-2. **V6-V8:** Implementation of length compositions.
-3. **V9-V10:** Fixing stability issues, initializing the 1950 population, and **fixing a conceptual bug (using maturity parameters L50/L95 instead of fishery selectivity Sel50/Selpeak)**.
-4. **V11:** Implementation of multi-scenario recruitment (Beverton-Holt and Ricker), dynamic Amax extraction, and reporting necessary data for external calculation of MSY-based reference points.
+![Assessment Results](outputs/Lutjanus_analis_ME_NE/results_2x2.png)
 
 ## How to Run
 1. Clone this repository.
