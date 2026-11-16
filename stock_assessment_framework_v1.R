@@ -28,17 +28,16 @@ dat <- list(
   t0=inputs$t0_f_fix,
   aw=inputs$WLa_f_fix,
   bw=inputs$WLb_f_fix
-  #,M=inputs$M_f_fix
   ,Amax=inputs$Nages_in,
   ages=as.vector(1:inputs$Nages_in),
   CV_len = as.vector(inputs$CV_lt_f_old_mean),
   sigma_R = inputs$sigmaR,
   L50=inputs$L50_f_fix,
   L95=inputs$L95_f_fix
-  #,h=inputs$h
   ,rec=1,
   ESS=FALSE,
-  n_fish_fleets=1
+  n_fish_fleets=1,
+  selex="logistic" #or "dome"
 )
 
 par <- list(
@@ -52,10 +51,11 @@ par <- list(
   logSL50=log(as.numeric(inputs$Sel50)),
   logdiff=log(as.numeric(inputs$Selpeak)-as.numeric(inputs$Sel50)),
   h=inputs$h,
-  M=inputs$M_f_fix
+  M=inputs$M_f_fix,
+  log.desc= log(10)
 )
 
-stk <- "Ocyurus_chrysurus_ME_NE" ##### name of stock
+stk <- "Ocyurus_chrysurus_ME_NE2" ##### name of stock
 
 outputs <- paste0(getwd(),"/outputs/")
 outdir <- paste0(outputs,stk)
@@ -334,6 +334,27 @@ do_likelihood_profile1 <- function (data, parameters, mapping, random = NULL, wh
         SPoRC_optim <- stats::nlminb(SPoRC_rtmb_model$par, 
                                      SPoRC_rtmb_model$fn, SPoRC_rtmb_model$gr)
         
+        if(max(abs(SPoRC_rtmb_model$gr(SPoRC_optim$par)))>1e-4){
+          tryCatch({
+            oldPar <- SPoRC_optim$par
+            oldObj <- SPoRC_optim$objective
+            
+            g <- SPoRC_rtmb_model$gr(SPoRC_optim$par)
+            h <- optimHess(SPoRC_optim$par, fn=SPoRC_rtmb_model$fn, gr=SPoRC_rtmb_model$gr)
+            
+            newPar <- oldPar- solve(h,g)
+            
+            if(all(is.finite(newPar))){
+              newObj <- SPoRC_rtmb_model$fn(newPar)
+              
+              if(is.finite(newObj) && newObj<oldObj){
+                SPoRC_optim$par <- newPar
+                SPoRC_optim$objective <- newObj
+              }
+            }
+          }, error = function(e) NULL)
+        }
+        
         SPoRC_rtmb_model$sd_rep <- RTMB::sdreport(SPoRC_rtmb_model)
         plr1 <- as.list(SPoRC_rtmb_model$sd_rep, "Est", report=TRUE)
         jnLL[j, 1] <- plr1$ret
@@ -384,6 +405,26 @@ do_likelihood_profile1 <- function (data, parameters, mapping, random = NULL, wh
                                                                                              random = random, silent = TRUE)
                                                          SPoRC_optim <- stats::nlminb(SPoRC_rtmb_model$par, 
                                                                                       SPoRC_rtmb_model$fn, SPoRC_rtmb_model$gr)
+                                                         if(max(abs(SPoRC_rtmb_model$gr(SPoRC_optim$par)))>1e-4){
+                                                           tryCatch({
+                                                             oldPar <- SPoRC_optim$par
+                                                             oldObj <- SPoRC_optim$objective
+                                                             
+                                                             g <- SPoRC_rtmb_model$gr(SPoRC_optim$par)
+                                                             h <- optimHess(SPoRC_optim$par, fn=SPoRC_rtmb_model$fn, gr=SPoRC_rtmb_model$gr)
+                                                             
+                                                             newPar <- oldPar- solve(h,g)
+                                                             
+                                                             if(all(is.finite(newPar))){
+                                                               newObj <- SPoRC_rtmb_model$fn(newPar)
+                                                               
+                                                               if(is.finite(newObj) && newObj<oldObj){
+                                                                 SPoRC_optim$par <- newPar
+                                                                 SPoRC_optim$objective <- newObj
+                                                               }
+                                                             }
+                                                           }, error = function(e) NULL)
+                                                         }
                                                          SPoRC_rtmb_model$sd_rep <- RTMB::sdreport(SPoRC_rtmb_model)
                                                          plr1 <- as.list(SPoRC_rtmb_model$sd_rep, "Est", report=TRUE)
                                                          result$jnLL <- plr1$ret
@@ -613,7 +654,15 @@ nll <- function(par){
   ### length, weigth and selex per age ####
   La <- linf*(1-exp(-k*(ages-t0)))
   Wa <- aw*La^bw/1e6
-  Sa <- 1/(1+exp(-log(19)*((La-SL50)/(SL95-SL50))))
+  
+  kc <- log(0.95)/log(0.5)
+  peak <- (SL95-(sqrt(kc)*SL50))/(1-sqrt(kc))
+  ascWid <- (peak-SL50)/(sqrt((-2*log(0.5))))
+  if(selex=="dome"){desWid <- exp(log.desc)}else{desWid <- 1e6}
+  wt <- 1/(1+exp(-5*(La-peak)))
+  Weff <- ascWid*(1-wt)+desWid*wt
+  Sa <- exp(-0.5*(((La-peak)/Weff)^2))
+
   Mata = 1.0 / (1.0 + exp(-log(19.0) * (La - L50) / (L95 - L50)))
   
   ### Mortality matrixes ####
@@ -785,16 +834,45 @@ nll <- function(par){
   ADREPORT(logPredC)
   ADREPORT(IndexPred)
   ADREPORT(Pmat)
+  ADREPORT(kc)
+  ADREPORT(peak)
+  ADREPORT(ascWid)
+  ADREPORT(wt)
+  ADREPORT(Weff)
+  
   #####  
   return(ret)
 }
 
 #### model fitting and quick diags ####
 {starttime <- Sys.time()
-mapping <- list(M=factor(NA), h=factor(NA))
+if(dat$selex=="logistic"){mapping <- list(M=factor(NA), h=factor(NA), log.desc=factor(NA))
+}else{mapping <- list(M=factor(NA), h=factor(NA))}
+
 random <- "RecDevs"
 obj <- MakeADFun(nll,par, random = random, map = mapping, silent = TRUE)
 fit <- nlminb(obj$par,obj$fn,obj$gr)
+if(max(abs(obj$gr(fit$par)))>1e-4){
+  tryCatch({
+    oldPar <- fit$par
+    oldObj <- fit$objective
+    
+    g <- obj$gr(fit$par)
+    h <- optimHess(fit$par, fn=obj$fn, gr=obj$gr)
+    
+    newPar <- oldPar- solve(h,g)
+    
+    if(all(is.finite(newPar))){
+      newObj <- obj$fn(newPar)
+      
+      if(is.finite(newObj) && newObj<oldObj){
+        fit$par <- newPar
+        fit$objective <- newObj
+      }
+    }
+  }, error = function(e) NULL)
+}
+obj$fn(fit$par)
 sdrep <- sdreport(obj, silent = TRUE)
 endtime <- Sys.time()
 runtime <- endtime-starttime
@@ -868,19 +946,21 @@ saveRDS(list(retro,retro_diff, runtime), paste0(outdir,"/retrospective.rds"))
 
 #### plots ####
 
-# 3 panel catch, index fit and lengths fit
+# 4 panel catch, index fit, lengths fit and selectivity
 {
   #x11()
   #pdf("outputs/model_fits.pdf", width = 8, height = 11)
-  wd <- 3000
-  ht <- 4000
+  wd <- 4000
+  ht <- 3000
   re <- 300
   png(paste0(outdir,"/model_fits.png"), width = wd, height = ht, res = re)
-  par(mfrow = c(3, 1), mar = c(4, 4, 2, 1))
+  par(mfrow = c(2, 2), mar = c(4, 4, 2, 1))
+  
   # catch timeseries
   plot(dat$years, dat$catch, pch = 20, type = "h",lwd = 10,
        xlab = "Year", ylab = "Catch (Metric tons)", col = "gray70",
        main = "Catch time series")
+  
   # cpue residuals
   plot(dat$index.yrs, dat$index.obs, pch = 20,
        xlab = "Year", ylab = "Abundance index",
@@ -901,6 +981,23 @@ saveRDS(list(retro,retro_diff, runtime), paste0(outdir,"/retrospective.rds"))
         , col = "red", lwd = 2.5, type = "b", pch = 16, cex = 0.6)
   legend("topright", legend = c("Observed", "Predicted"), 
          col = c("gray70", "red"), lwd = c(6, 2.5), lty = c(1, 1), pch = c(NA, 16))
+  
+  # selectivity 
+  Lseq <- seq(0, max(dat$length.bins), length.out = 200)
+  wt <- 1 / (1 + exp(-5 * (Lseq - as.numeric(plr$peak))))
+  Weff <- as.numeric(plr$ascWid) * (1 - wt) + 
+    if(dat$selex=="dome"){exp(fit$par["log.desc"])*wt}else{exp(exp(par$log.desc))*wt}
+  if(dat$selex=="dome"){
+    Sa <- exp(-0.5 * (((Lseq - as.numeric(plr$peak)) / Weff)^2))
+    }else{
+    Sa <- 1/(1+exp(-log(19)*((Lseq - exp(fit$par["logSL50"]))/
+                               ((exp(fit$par["logSL50"])+exp(fit$par["logdiff"])) - 
+                                  exp(fit$par["logSL50"])))))
+  }
+  plot(Lseq,Sa,xlab = "Length (cm)", ylab = "Selectivity", 
+       main = paste("Selectivity Curve (", dat$selex, ")", sep = ""),
+       type = "l", lwd = 2.5, col = "darkblue")
+
   graphics.off()
 }
 
