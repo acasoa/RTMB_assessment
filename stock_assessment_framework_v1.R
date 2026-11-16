@@ -1,3 +1,5 @@
+#rm(list = ls())
+#gc()
 setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
 library(RTMB)
 library(SPoRC)
@@ -5,12 +7,12 @@ library(scales)
 library(dplyr)
 library(parallel)
 #### data preparation ####
-cat <- read.csv("data/chrysurus.sc1.csv")
-ind <- read.csv("data/chrysurus.index.csv")
-len <- read.csv("data/chrysurus.LenComp.csv", header = FALSE)
+cat <- read.csv("data/synagris.sc1.csv")
+ind <- read.csv("data/synagris.index.csv")
+len <- read.csv("data/synagris.LenComp.csv", header = FALSE)
 colnames(len) <- as.character(len[1,])
 len <- len[-1,]
-inputs <- readRDS(paste0(getwd(),"/data/chrysurus.input.rds"))
+inputs <- readRDS(paste0(getwd(),"/data/synagris.input.rds"))
 
 dat <- list(
   years=as.vector(cat$Year),
@@ -37,11 +39,11 @@ dat <- list(
   ,rec=1,
   ESS=FALSE,
   n_fish_fleets=1,
-  selex="logistic" #or "dome"
+  selex="dome" #or "dome"
 )
 
 par <- list(
-  logR0=log(10000000),
+  logR0=log(100000),
   logq=log(0.001),
   logF=rep(log(0.2),length(dat$years)),
   logSigmaIdx=0,
@@ -55,7 +57,7 @@ par <- list(
   log.desc= log(10)
 )
 
-stk <- "Ocyurus_chrysurus_ME_NE2" ##### name of stock
+stk <- "Lutjanus_synagris_ME_NE" ##### name of stock
 
 outputs <- paste0(getwd(),"/outputs/")
 outdir <- paste0(outputs,stk)
@@ -633,6 +635,7 @@ do_retrospective1 <- function (n_retro, data, parameters, mapping, random = NULL
 nll <- function(par){
   getAll(par,dat)
   ### loading data ####
+  warning("Beginning of ",stk, " assessment")
   if (!exists("rec")) {
     warning("Recruitment assumed flat", call. = FALSE)
     rec <- 0
@@ -640,6 +643,13 @@ nll <- function(par){
     warning("Recruitment assumed Beverton-Holt", call. = FALSE)
   } else if (rec==2) {
     warning("Recruitment assumed Ricker", call. = FALSE)
+  }
+  if (selex=="logistic") {
+    warning("Selectivity set as logistic", call. = FALSE)
+  }else if (selex=="dome") {
+    warning("Selectivity set as dome-shaped", call. = FALSE)
+  } else if (selex!="logistic"&selex!="dome") {
+    warning("Selectivity not specified (or invalid). Assuming 'logistic'.", call. = FALSE)
   }
   R0 <- exp(logR0)
   q <- exp(logq)
@@ -658,12 +668,18 @@ nll <- function(par){
   kc <- log(0.95)/log(0.5)
   peak <- (SL95-(sqrt(kc)*SL50))/(1-sqrt(kc))
   ascWid <- (peak-SL50)/(sqrt((-2*log(0.5))))
-  if(selex=="dome"){desWid <- exp(log.desc)}else{desWid <- 1e6}
+  desWid <- exp(log.desc)
   wt <- 1/(1+exp(-5*(La-peak)))
   Weff <- ascWid*(1-wt)+desWid*wt
-  Sa <- exp(-0.5*(((La-peak)/Weff)^2))
+  
+  if(selex=="dome"){
+    Sa <- exp(-0.5*(((La-peak)/Weff)^2))
+  }else{
+    desWid <- 1e6
+    Sa <- 1/(1+exp(-log(19)*((La-SL50)/(SL95-SL50))))
+  }
 
-  Mata = 1.0 / (1.0 + exp(-log(19.0) * (La - L50) / (L95 - L50)))
+  Mata=1/(1+exp(-log(19)*(La-L50)/(L95-L50)))
   
   ### Mortality matrixes ####
   Fmat <- outer(Sa,Fi)
@@ -852,26 +868,26 @@ if(dat$selex=="logistic"){mapping <- list(M=factor(NA), h=factor(NA), log.desc=f
 random <- "RecDevs"
 obj <- MakeADFun(nll,par, random = random, map = mapping, silent = TRUE)
 fit <- nlminb(obj$par,obj$fn,obj$gr)
-if(max(abs(obj$gr(fit$par)))>1e-4){
-  tryCatch({
-    oldPar <- fit$par
-    oldObj <- fit$objective
-    
-    g <- obj$gr(fit$par)
-    h <- optimHess(fit$par, fn=obj$fn, gr=obj$gr)
-    
-    newPar <- oldPar- solve(h,g)
-    
-    if(all(is.finite(newPar))){
-      newObj <- obj$fn(newPar)
-      
-      if(is.finite(newObj) && newObj<oldObj){
-        fit$par <- newPar
-        fit$objective <- newObj
-      }
-    }
-  }, error = function(e) NULL)
-}
+#if(max(abs(obj$gr(fit$par)))>1e-4){
+#  tryCatch({
+#    oldPar <- fit$par
+#    oldObj <- fit$objective
+#    
+#    g <- obj$gr(fit$par)
+#    h <- optimHess(fit$par, fn=obj$fn, gr=obj$gr)
+#    
+#    newPar <- oldPar- solve(h,g)
+#    
+#    if(all(is.finite(newPar))){
+#      newObj <- obj$fn(newPar)
+#      
+#      if(is.finite(newObj) && newObj<oldObj){
+#        fit$par <- newPar
+#        fit$objective <- newObj
+#      }
+#    }
+#  }, error = function(e) NULL)
+#}
 obj$fn(fit$par)
 sdrep <- sdreport(obj, silent = TRUE)
 endtime <- Sys.time()
@@ -1158,7 +1174,7 @@ saveRDS(list(retro,retro_diff, runtime), paste0(outdir,"/retrospective.rds"))
 }
 
 ####  ####
-paste0("End of ",stk, " assessment")
+warning("End of ",stk, " assessment")
 
 
 
