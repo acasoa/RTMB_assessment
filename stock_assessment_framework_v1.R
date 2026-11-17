@@ -58,7 +58,7 @@ par <- list(
   logSigmaF=log(0.2)
 )
 
-stk <- "Lutjanus_analis_ME_NE" ##### name of stock
+stk <- "analis_ME_NE" ##### name of stock
 
 outputs <- paste0(getwd(),"/outputs/")
 outdir <- paste0(outputs,stk)
@@ -207,7 +207,7 @@ Get_Reference_Points1 <- function (data, rep, SPR_x = NULL, t_spwn = 0,sex_ratio
 
 ## Jitter
 do_jitter1 <- function (data, parameters, mapping, random = NULL, sd, n_jitter,
-                        n_newton_loops, do_par, n_cores, par_vec = NULL) 
+                        n_newton_loops=0, do_par, n_cores, par_vec = NULL) 
 {
   jitter_all <- data.frame()
   obj <- RTMB::MakeADFun(func = nll, parameters = parameters, 
@@ -220,8 +220,7 @@ do_jitter1 <- function (data, parameters, mapping, random = NULL, sd, n_jitter,
       else jitter_pars <- par_vec + stats::rnorm(length(obj$par), 
                                                  0, sd)
       optim <- stats::nlminb(jitter_pars, obj$fn, obj$gr, 
-                             control = list(iter.max = 1e+05, eval.max = 1e+05, 
-                                            rel.tol = 1e-15))
+                             control = list(iter.max = 2000, eval.max = 4000))
       try_improve <- tryCatch(expr = for (j in 1:n_newton_loops) {
         g = as.numeric(obj$gr(optim$par))
         h = optimHess(optim$par, fn = obj$fn, gr = obj$gr)
@@ -262,8 +261,7 @@ do_jitter1 <- function (data, parameters, mapping, random = NULL, sd, n_jitter,
                                                   else jitter_pars <- par_vec + stats::rnorm(length(obj$par), 
                                                                                              0, sd)
                                                   optim <- stats::nlminb(jitter_pars, obj$fn, 
-                                                                         obj$gr, control = list(iter.max = 1e+05, 
-                                                                                                eval.max = 1e+05, rel.tol = 1e-15))
+                                                                         obj$gr, control = list(iter.max = 2000, eval.max = 4000))
                                                   try_improve <- tryCatch({
                                                     for (j in 1:n_newton_loops) {
                                                       g <- as.numeric(obj$gr(optim$par))
@@ -335,7 +333,14 @@ do_likelihood_profile1 <- function (data, parameters, mapping, random = NULL, wh
                                           random = random, silent = TRUE)
       tryCatch({
         SPoRC_optim <- stats::nlminb(SPoRC_rtmb_model$par, 
-                                     SPoRC_rtmb_model$fn, SPoRC_rtmb_model$gr)
+                                     SPoRC_rtmb_model$fn, SPoRC_rtmb_model$gr,
+                                     control = list(iter.max = 2000, eval.max = 4000))
+        
+        #for (r in 1:5) {
+        #  if (SPoRC_optim$convergence == 0 && max(abs(SPoRC_rtmb_model$gr(SPoRC_optim$par))) < 1e-4) break
+        #  SPoRC_optim <- stats::nlminb(SPoRC_optim$par, SPoRC_rtmb_model$fn, SPoRC_rtmb_model$gr,
+        #                               control = list(iter.max = 2000, eval.max = 4000))
+        #}
         
         if(max(abs(SPoRC_rtmb_model$gr(SPoRC_optim$par)))>1e-4){
           tryCatch({
@@ -407,7 +412,15 @@ do_likelihood_profile1 <- function (data, parameters, mapping, random = NULL, wh
                                                                                              map = local_mapping, 
                                                                                              random = random, silent = TRUE)
                                                          SPoRC_optim <- stats::nlminb(SPoRC_rtmb_model$par, 
-                                                                                      SPoRC_rtmb_model$fn, SPoRC_rtmb_model$gr)
+                                                                                      SPoRC_rtmb_model$fn, SPoRC_rtmb_model$gr,
+                                                                                      control = list(iter.max = 2000, eval.max = 4000))
+                                                         
+                                                        #for (r in 1:5) {
+                                                        #   if (SPoRC_optim$convergence == 0 && max(abs(SPoRC_rtmb_model$gr(SPoRC_optim$par))) < 1e-4) break
+                                                        #   SPoRC_optim <- stats::nlminb(SPoRC_optim$par, SPoRC_rtmb_model$fn, SPoRC_rtmb_model$gr,
+                                                        #                                control = list(iter.max = 2000, eval.max = 4000))
+                                                        # }
+                                                         
                                                          if(max(abs(SPoRC_rtmb_model$gr(SPoRC_optim$par)))>1e-4){
                                                            tryCatch({
                                                              oldPar <- SPoRC_optim$par
@@ -924,7 +937,7 @@ saveRDS(list(BH_RP = BH_RP, SPR_RP = SPR_RP, fit=fit$par,
 n_cores <- 6; sd <- 0.2; n_jitter <- 50
 starttime <- Sys.time()
 jit <- do_jitter1(data = dat, parameters = par, mapping = mapping, random = random, 
-           sd = sd, n_jitter = n_jitter, n_newton_loops = 1, do_par = TRUE, n_cores = n_cores)
+           sd = sd, n_jitter = n_jitter, do_par = TRUE, n_cores = n_cores)
 endtime <- Sys.time(); runtime <- endtime-starttime; round(runtime,2)
 
 table(round(jit$jnLL, 3))
@@ -935,7 +948,9 @@ saveRDS(list(jit,runtime), paste0(outdir,"/jitter_results.rds"))
 
 #### likelihood profiles (M and h) ####
 ## change range of M based on your data
-what <- c("M","h"); min_val <- c(0.26,0.5); max_val <- c(0.34,0.9); inc <- c(0.01,0.05); n_cores <- 6
+
+what <- c("M","h"); min_val <- c(0.26,0.5); max_val <- c(0.34,0.9); inc <- c(0.01,0.05); n_cores <- 6; pars <- obj$env$parList(obj$env$last.par.best)
+## MUDAR PRA A ESPECIE
 profiles <- list()
 starttime <- Sys.time()
 for (i in 1:length(what)) {
