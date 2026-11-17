@@ -7,12 +7,12 @@ library(scales)
 library(dplyr)
 library(parallel)
 #### data preparation ####
-cat <- read.csv("data/synagris.sc1.csv")
-ind <- read.csv("data/synagris.index.csv")
-len <- read.csv("data/synagris.LenComp.csv", header = FALSE)
+cat <- read.csv("data/analis.sc1.csv")
+ind <- read.csv("data/analis.index.csv")
+len <- read.csv("data/analis.LenComp.csv", header = FALSE)
 colnames(len) <- as.character(len[1,])
 len <- len[-1,]
-inputs <- readRDS(paste0(getwd(),"/data/synagris.input.rds"))
+inputs <- readRDS(paste0(getwd(),"/data/analis.input.rds"))
 
 dat <- list(
   years=as.vector(cat$Year),
@@ -39,7 +39,7 @@ dat <- list(
   ,rec=1,
   ESS=FALSE,
   n_fish_fleets=1,
-  selex="dome" #or "dome"
+  selex="logistic" #or "dome"
 )
 
 par <- list(
@@ -54,10 +54,11 @@ par <- list(
   logdiff=log(as.numeric(inputs$Selpeak)-as.numeric(inputs$Sel50)),
   h=inputs$h,
   M=inputs$M_f_fix,
-  log.desc= log(10)
+  log.desc= log(10),
+  logSigmaF=log(0.2)
 )
 
-stk <- "Lutjanus_synagris_ME_NE" ##### name of stock
+stk <- "Lutjanus_analis_ME_NE" ##### name of stock
 
 outputs <- paste0(getwd(),"/outputs/")
 outdir <- paste0(outputs,stk)
@@ -635,7 +636,6 @@ do_retrospective1 <- function (n_retro, data, parameters, mapping, random = NULL
 nll <- function(par){
   getAll(par,dat)
   ### loading data ####
-  warning("Beginning of ",stk, " assessment")
   if (!exists("rec")) {
     warning("Recruitment assumed flat", call. = FALSE)
     rec <- 0
@@ -696,7 +696,7 @@ nll <- function(par){
   SSBv[Amax] <- SSBv[Amax-1]*exp(-M)/(1-exp(-M))
   SSB0 <- sum(SSBv*Wa*Mata*0.5)
   
-  #### recruitment  ####
+  ### recruitment  ####
   if(rec==0){ # flat
     # 1st row = recruitment
     N[1,1] <- R0*exp(RecDevs[1] - 0.5*sigmaRec^2)
@@ -705,8 +705,9 @@ nll <- function(par){
     }
     
     for (a in 1:(Amax-1)) {
-      N[a+1,1] <- N[a,1]*exp(-Zmat[a,1])
+      N[a+1,1] <- R0*exp(-M*a)
     }
+    N[Amax,1] <- N[Amax-1,1]*exp(-M)/(1-exp(-M))
     
     for (t in 1:(length(years)-1)) {
       for (a in 1:(Amax-1)) {
@@ -719,8 +720,9 @@ nll <- function(par){
     # 1st row = recruitment
     N[1,1] <- R0*exp(RecDevs[1] - 0.5*sigmaRec^2)
     for (a in 1:(Amax-1)) {
-      N[a+1,1] <- N[a,1]*exp(-Zmat[a,1])
+      N[a+1,1] <- R0*exp(-M*a)
     }
+    N[Amax,1] <- N[Amax-1,1]*exp(-M)/(1-exp(-M))
     
     for (t in 1:(length(years)-1)) {
       ssbly <- sum(N[,t]*Wa*Mata*0.5)
@@ -737,8 +739,9 @@ nll <- function(par){
     # 1st row = recruitment
     N[1,1] <- R0*exp(RecDevs[1] - 0.5*sigmaRec^2)
     for (a in 1:(Amax-1)) {
-      N[a+1,1] <- N[a,1]*exp(-Zmat[a,1])
+      N[a+1,1] <- R0*exp(-M*a)
     }
+    N[Amax,1] <- N[Amax-1,1]*exp(-M)/(1-exp(-M))
     
     for (t in 1:(length(years)-1)) {
       ssbly <- sum(N[,t]*Wa*Mata*0.5)
@@ -784,7 +787,7 @@ nll <- function(par){
   Lmat <- matrix(0,nrow=length(ages), ncol=length(length.bins))
   for (t in 1:length(length.bins)) {
     for (a in 1:Amax) {
-      Lmat[a,t] <-  pnorm((Lmat[a,t]+upp[t]),La[a],CV_len*La[a]) - pnorm((Lmat[a,t]+low[t]),La[a],CV_len*La[a])
+      Lmat[a,t] <-  pnorm((upp[t]),La[a],CV_len*La[a]) - pnorm((low[t]),La[a],CV_len*La[a])
     }
   }
   
@@ -818,8 +821,13 @@ nll <- function(par){
     }
     nll.length <- sum(nll.length.i)
   }
+  ### nll F (Random Walk) ####
+  sigmaF <- exp(logSigmaF)
+  nll.rwF <- -sum(dnorm(diff(logF), 0, sigmaF, log=TRUE))
+  
   ### nll total ####
-  ret <- sum(nll.recdevs,nll.catch,nll.index,nll.length)
+  ret <- sum(nll.recdevs,nll.catch,nll.index,nll.length, nll.rwF
+             )
 
   ### reports ####
   
@@ -843,6 +851,7 @@ nll <- function(par){
   ADREPORT(nll.catch)
   ADREPORT(nll.index)
   ADREPORT(nll.length)
+  ADREPORT(nll.rwF)
   ADREPORT(ret)
   ADREPORT(nll.catch.i)
   ADREPORT(nll.index.i)
@@ -867,27 +876,27 @@ if(dat$selex=="logistic"){mapping <- list(M=factor(NA), h=factor(NA), log.desc=f
 
 random <- "RecDevs"
 obj <- MakeADFun(nll,par, random = random, map = mapping, silent = TRUE)
-fit <- nlminb(obj$par,obj$fn,obj$gr)
-#if(max(abs(obj$gr(fit$par)))>1e-4){
-#  tryCatch({
-#    oldPar <- fit$par
-#    oldObj <- fit$objective
-#    
-#    g <- obj$gr(fit$par)
-#    h <- optimHess(fit$par, fn=obj$fn, gr=obj$gr)
-#    
-#    newPar <- oldPar- solve(h,g)
-#    
-#    if(all(is.finite(newPar))){
-#      newObj <- obj$fn(newPar)
-#      
-#      if(is.finite(newObj) && newObj<oldObj){
-#        fit$par <- newPar
-#        fit$objective <- newObj
-#      }
-#    }
-#  }, error = function(e) NULL)
-#}
+fit <- nlminb(obj$par,obj$fn,obj$gr, control = list(iter.max = 2000, eval.max = 4000))
+if(max(abs(obj$gr(fit$par)))>1e-4){
+  tryCatch({
+    oldPar <- fit$par
+    oldObj <- fit$objective
+    
+    g <- obj$gr(fit$par)
+    h <- optimHess(fit$par, fn=obj$fn, gr=obj$gr)
+    
+    newPar <- oldPar- solve(h,g)
+    
+    if(all(is.finite(newPar))){
+      newObj <- obj$fn(newPar)
+      
+      if(is.finite(newObj) && newObj<oldObj){
+        fit$par <- newPar
+        fit$objective <- newObj
+      }
+    }
+  }, error = function(e) NULL)
+}
 obj$fn(fit$par)
 sdrep <- sdreport(obj, silent = TRUE)
 endtime <- Sys.time()
@@ -1064,7 +1073,10 @@ saveRDS(list(retro,retro_diff, runtime), paste0(outdir,"/retrospective.rds"))
   lines(dat$years,plr$Bratio + 1.96 * plr_se$Bratio, lty=2)
   abline(h=BH_RP$b_ref_pt/BH_RP$virgin_b_ref_pt, col="red", lty=2)
   text(x = min(dat$years) + 4,y = BH_RP$b_ref_pt/BH_RP$virgin_b_ref_pt,
-       labels = expression("Management Target"), pos = 3,col = "black",cex = 0.7)
+       labels = expression("Management target"), pos = 3,col = "black",cex = 0.7)
+  abline(h=BH_RP$b_ref_pt/BH_RP$virgin_b_ref_pt/2, col="red", lty=2)
+  text(x = min(dat$years) + 4,y = BH_RP$b_ref_pt/BH_RP$virgin_b_ref_pt/2,
+       labels = expression("Overfishing limit"), pos = 3,col = "black",cex = 0.7)
   
   plot(dat$years,plr$Rec/1e6, pch=20,
        xlab = "Year", ylab = "Age-0 recruits (Millions)", main = "Recruitment")
