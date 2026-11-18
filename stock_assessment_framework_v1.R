@@ -7,12 +7,12 @@ library(scales)
 library(dplyr)
 library(parallel)
 #### data preparation ####
-cat <- read.csv("data/analis.sc1.csv")
-ind <- read.csv("data/analis.index.csv")
-len <- read.csv("data/analis.LenComp.csv", header = FALSE)
+cat <- read.csv("data/chrysurus.sc1.csv")
+ind <- read.csv("data/chrysurus.index.csv")
+len <- read.csv("data/chrysurus.LenComp.csv", header = FALSE)
 colnames(len) <- as.character(len[1,])
 len <- len[-1,]
-inputs <- readRDS(paste0(getwd(),"/data/analis.input.rds"))
+inputs <- readRDS(paste0(getwd(),"/data/chrysurus.input.rds"))
 
 dat <- list(
   years=as.vector(cat$Year),
@@ -58,7 +58,7 @@ par <- list(
   logSigmaF=log(0.2)
 )
 
-stk <- "analis_ME_NE" ##### name of stock
+stk <- "Ocyurus_chrysurus_ME_NE" ##### name of stock
 
 outputs <- paste0(getwd(),"/outputs/")
 outdir <- paste0(outputs,stk)
@@ -106,8 +106,11 @@ Get_Reference_Points1 <- function (data, rep, SPR_x = NULL, t_spwn = 0,sex_ratio
         Nspr[2, j] = Nspr[2, j - 1] * exp(-1 * (M + 
                                                   sum(F_fract_flt * F_x * fish_sel[j - 1, ])))
       }
-      Nspr[1, n_ages] = Nspr[1, n_ages - 1] * exp(-1 * M)/(1 - exp(-1 * M))
-      Nspr[2, n_ages] = Nspr[2, n_ages - 1] * exp(-1 * M + sum(F_fract_flt * F_x * fish_sel[n_ages - 1, ]))/(1 -exp(-1 * (M + sum(F_fract_flt * F_x * fish_sel[n_ages, ]))))
+      Nspr[1, n_ages] = Nspr[1, n_ages - 1] * 
+        exp(-1 * M)/(1 - exp(-1 * M))
+      Nspr[2, n_ages] = Nspr[2, n_ages - 1] * 
+        exp(-1 * (M + sum(F_fract_flt * F_x * fish_sel[n_ages - 1, ])))/
+        (1 -exp(-1 * (M + sum(F_fract_flt * F_x * fish_sel[n_ages, ]))))
       for (j in 1:n_ages) {
         SB_age[1, j] = Nspr[1, j] * WAA[j] * MatAA[j] * exp(-t_spwn * 
                                                               M)
@@ -124,6 +127,7 @@ Get_Reference_Points1 <- function (data, rep, SPR_x = NULL, t_spwn = 0,sex_ratio
       RTMB::REPORT(SB0)
       RTMB::REPORT(SB_F_x)
       RTMB::REPORT(F_x)
+      RTMB::REPORT(SPR)
       return(sprpen)
     }
     single_region_BH_Fmsy1 <- function (par_list) {
@@ -133,7 +137,7 @@ Get_Reference_Points1 <- function (data, rep, SPR_x = NULL, t_spwn = 0,sex_ratio
       n_ages = dim(fish_sel)[1]
       Fmsy = exp(log_Fmsy)
       SB_age = Nspr = array(0, dim = c(2, n_ages))
-      CAA = rep(0, n_ages)
+      CAA = base::rep(0, n_ages)
       Nspr[, 1] = 1 * sex_ratio_f
       for (j in 2:(n_ages - 1)) {
         Nspr[1, j] = Nspr[1, j - 1] * exp(-1 * M)
@@ -180,8 +184,18 @@ Get_Reference_Points1 <- function (data, rep, SPR_x = NULL, t_spwn = 0,sex_ratio
       
       obj <- RTMB::MakeADFun(func=single_region_SPR1, 
                              parameters = par_list, map = NULL, silent = TRUE)
-      obj$optim <- stats::nlminb(obj$par, obj$fn, obj$gr)
-      obj$rep <- obj$report(obj$env$last.par.best)
+      obj$optim <- stats::nlminb(obj$par, obj$fn, obj$gr,
+                                 control = list(iter.max=2000, eval.max=4000))
+
+      message(
+        "Convergence code: ", obj$optim$convergence,
+        "\nMessage: ", obj$optim$message,
+        "\nObjective: ", obj$optim$objective,
+        "\nMaximum absolute gradient: ",
+        max(abs(obj$gr(obj$optim$par)))
+      )
+      
+      obj$rep <- obj$report(obj$optim$par)
       f_ref_pt[1] <- obj$rep$F_x
       b_ref_pt[1] <- obj$rep$SB_F_x * rep$R0
       virgin_b_ref_pt[1] <- obj$rep$SB0 * rep$R0
@@ -194,15 +208,25 @@ Get_Reference_Points1 <- function (data, rep, SPR_x = NULL, t_spwn = 0,sex_ratio
       obj <- RTMB::MakeADFun(single_region_BH_Fmsy1, 
                              parameters = par_list, map = NULL, 
                              silent = TRUE)
-      obj$optim <- stats::nlminb(obj$par, obj$fn, obj$gr)
-      obj$rep <- obj$report(obj$env$last.par.best)
+      obj$optim <- stats::nlminb(obj$par, obj$fn, obj$gr,
+                                 control = list(iter.max=2000, eval.max=4000))
+      
+      message(
+        "Convergence code: ", obj$optim$convergence,
+        "\nMessage: ", obj$optim$message,
+        "\nObjective: ", obj$optim$objective,
+        "\nMaximum absolute gradient: ",
+        max(abs(obj$gr(obj$optim$par)))
+      )
+      
+      obj$rep <- obj$report(obj$optim$par)
       f_ref_pt[1] <- obj$rep$Fmsy
       b_ref_pt[1] <- obj$rep$Bmsy
       virgin_b_ref_pt[1] <- obj$rep$B0
     }
   }
   return(list(f_ref_pt = f_ref_pt, b_ref_pt = b_ref_pt, 
-              virgin_b_ref_pt = virgin_b_ref_pt))
+              virgin_b_ref_pt = virgin_b_ref_pt,report = obj$rep))
 }
 
 ## Jitter
@@ -221,7 +245,7 @@ do_jitter1 <- function (data, parameters, mapping, random = NULL, sd, n_jitter,
                                                  0, sd)
       optim <- stats::nlminb(jitter_pars, obj$fn, obj$gr, 
                              control = list(iter.max = 2000, eval.max = 4000))
-      try_improve <- tryCatch(expr = for (j in 1:n_newton_loops) {
+      try_improve <- tryCatch(expr = for (j in seq_len(n_newton_loops)) {
         g = as.numeric(obj$gr(optim$par))
         h = optimHess(optim$par, fn = obj$fn, gr = obj$gr)
         optim$par = optim$par - solve(h, g)
@@ -231,7 +255,8 @@ do_jitter1 <- function (data, parameters, mapping, random = NULL, sd, n_jitter,
       }, warning = function(w) {
         w
       })
-      obj$rep <- obj$report(obj$env$last.par.best)
+      
+      optim$objective <- obj$fn(optim$par)
       obj$sd_rep <- RTMB::sdreport(obj)
       plr1 <- as.list(obj$sd_rep, "Est", report=TRUE)
       jitter_ts_df <- data.frame(
@@ -242,6 +267,8 @@ do_jitter1 <- function (data, parameters, mapping, random = NULL, sd, n_jitter,
       jitter_ts_df$Hessian  <-  obj$sd_rep$pdHess
       jitter_ts_df$jnLL  <-  optim$objective
       jitter_ts_df$Max_Gradient <-  max(abs(obj$sd_rep$gradient.fixed))
+      jitter_ts_df$Convergence <- optim$convergence
+      jitter_ts_df$Optim_Message <- optim$message
       
       jitter_all <- rbind(jitter_all, jitter_ts_df)
     }
@@ -263,7 +290,7 @@ do_jitter1 <- function (data, parameters, mapping, random = NULL, sd, n_jitter,
                                                   optim <- stats::nlminb(jitter_pars, obj$fn, 
                                                                          obj$gr, control = list(iter.max = 2000, eval.max = 4000))
                                                   try_improve <- tryCatch({
-                                                    for (j in 1:n_newton_loops) {
+                                                    for (j in seq_len(n_newton_loops)) {
                                                       g <- as.numeric(obj$gr(optim$par))
                                                       h <- optimHess(optim$par, fn = obj$fn, 
                                                                      gr = obj$gr)
@@ -271,7 +298,8 @@ do_jitter1 <- function (data, parameters, mapping, random = NULL, sd, n_jitter,
                                                       optim$objective <- obj$fn(optim$par)
                                                     }
                                                   }, error = function(e) e, warning = function(w) w)
-                                                  obj$rep <- obj$report(obj$env$last.par.best)
+                                                  
+                                                  optim$objective <- obj$fn(optim$par)
                                                   obj$sd_rep <- RTMB::sdreport(obj)
                                                   plr1 <- as.list(obj$sd_rep, "Est", report=TRUE)
                                                   jitter_ts_df <- data.frame(
@@ -282,6 +310,8 @@ do_jitter1 <- function (data, parameters, mapping, random = NULL, sd, n_jitter,
                                                   jitter_ts_df$Hessian  <-  obj$sd_rep$pdHess
                                                   jitter_ts_df$jnLL  <-  optim$objective
                                                   jitter_ts_df$Max_Gradient <-  max(abs(obj$sd_rep$gradient.fixed))
+                                                  jitter_ts_df$Convergence <- optim$convergence
+                                                  jitter_ts_df$Optim_Message <- optim$message
                                                   p()
                                                   jitter_ts_df
                                                 }, future.seed = TRUE) %>% bind_rows()
@@ -312,35 +342,39 @@ do_likelihood_profile1 <- function (data, parameters, mapping, random = NULL, wh
                                                                            NULL))
   if (do_par == FALSE) {
     for (j in 1:length(vals)) {
-      if (!is.null(dim(parameters[[what]]))) {
-        parameters[[what]] <- do.call(`[<-`, c(list(parameters[[what]]), 
+      
+      local_parameters <- parameters
+      local_mapping <- mapping
+      
+      if (!is.null(dim(local_parameters[[what]]))) {
+        local_parameters[[what]] <- do.call(`[<-`, c(list(local_parameters[[what]]), 
                                                idx, list(vals[j])))
         counter <- 1
-        map_parameter <- do.call(`[<-`, c(list(parameters[[what]]), 
+        map_parameter <- do.call(`[<-`, c(list(local_parameters[[what]]), 
                                           idx, list(NA)))
         non_na <- which(!is.na(map_parameter))
         for (i in 1:length(non_na)) {
           map_parameter[non_na[i]] <- counter
           counter <- counter + 1
         }
-        mapping[[what]] <- factor(map_parameter)
+        local_mapping[[what]] <- factor(map_parameter)
       }else {
-        parameters[[what]] <- vals[j]
-        mapping[[what]] <- factor(NA)
+        local_parameters[[what]] <- vals[j]
+        local_mapping[[what]] <- factor(NA)
       }
       SPoRC_rtmb_model <- RTMB::MakeADFun(func = nll 
-                                          , parameters = parameters, map = mapping, 
+                                          , parameters = local_parameters, map = local_mapping, 
                                           random = random, silent = TRUE)
       tryCatch({
         SPoRC_optim <- stats::nlminb(SPoRC_rtmb_model$par, 
                                      SPoRC_rtmb_model$fn, SPoRC_rtmb_model$gr,
                                      control = list(iter.max = 2000, eval.max = 4000))
         
-        #for (r in 1:5) {
-        #  if (SPoRC_optim$convergence == 0 && max(abs(SPoRC_rtmb_model$gr(SPoRC_optim$par))) < 1e-4) break
-        #  SPoRC_optim <- stats::nlminb(SPoRC_optim$par, SPoRC_rtmb_model$fn, SPoRC_rtmb_model$gr,
-        #                               control = list(iter.max = 2000, eval.max = 4000))
-        #}
+        for (r in 1:5) {
+          if (SPoRC_optim$convergence == 0 && max(abs(SPoRC_rtmb_model$gr(SPoRC_optim$par))) < 1e-4) break
+          SPoRC_optim <- stats::nlminb(SPoRC_optim$par, SPoRC_rtmb_model$fn, SPoRC_rtmb_model$gr,
+                                       control = list(iter.max = 2000, eval.max = 4000))
+        }
         
         if(max(abs(SPoRC_rtmb_model$gr(SPoRC_optim$par)))>1e-4){
           tryCatch({
@@ -363,9 +397,12 @@ do_likelihood_profile1 <- function (data, parameters, mapping, random = NULL, wh
           }, error = function(e) NULL)
         }
         
+        SPoRC_optim$objective <- SPoRC_rtmb_model$fn(SPoRC_optim$par)
+        max_grad <- max(abs(SPoRC_rtmb_model$gr(SPoRC_optim$par)))
         SPoRC_rtmb_model$sd_rep <- RTMB::sdreport(SPoRC_rtmb_model)
         plr1 <- as.list(SPoRC_rtmb_model$sd_rep, "Est", report=TRUE)
-        jnLL[j, 1] <- plr1$ret
+        
+        jnLL[j, 1] <- SPoRC_optim$objective
         rec_nLL[j, 1] <- plr1$nll.recdevs
         Catch_nLL[j, 1] <- plr1$nll.catch
         FishLen_nLL[j, 1] <- plr1$nll.length
@@ -415,11 +452,11 @@ do_likelihood_profile1 <- function (data, parameters, mapping, random = NULL, wh
                                                                                       SPoRC_rtmb_model$fn, SPoRC_rtmb_model$gr,
                                                                                       control = list(iter.max = 2000, eval.max = 4000))
                                                          
-                                                        #for (r in 1:5) {
-                                                        #   if (SPoRC_optim$convergence == 0 && max(abs(SPoRC_rtmb_model$gr(SPoRC_optim$par))) < 1e-4) break
-                                                        #   SPoRC_optim <- stats::nlminb(SPoRC_optim$par, SPoRC_rtmb_model$fn, SPoRC_rtmb_model$gr,
-                                                        #                                control = list(iter.max = 2000, eval.max = 4000))
-                                                        # }
+                                                        for (r in 1:5) {
+                                                           if (SPoRC_optim$convergence == 0 && max(abs(SPoRC_rtmb_model$gr(SPoRC_optim$par))) < 1e-4) break
+                                                           SPoRC_optim <- stats::nlminb(SPoRC_optim$par, SPoRC_rtmb_model$fn, SPoRC_rtmb_model$gr,
+                                                                                        control = list(iter.max = 2000, eval.max = 4000))
+                                                         }
                                                          
                                                          if(max(abs(SPoRC_rtmb_model$gr(SPoRC_optim$par)))>1e-4){
                                                            tryCatch({
@@ -441,9 +478,12 @@ do_likelihood_profile1 <- function (data, parameters, mapping, random = NULL, wh
                                                              }
                                                            }, error = function(e) NULL)
                                                          }
+                                                         SPoRC_optim$objective <- SPoRC_rtmb_model$fn(SPoRC_optim$par)
+                                                         max_grad <- max(abs(SPoRC_rtmb_model$gr(SPoRC_optim$par)))
                                                          SPoRC_rtmb_model$sd_rep <- RTMB::sdreport(SPoRC_rtmb_model)
                                                          plr1 <- as.list(SPoRC_rtmb_model$sd_rep, "Est", report=TRUE)
-                                                         result$jnLL <- plr1$ret
+                                                         
+                                                         result$jnLL <- SPoRC_optim$objective
                                                          result$rec_nLL <- plr1$nll.recdevs
                                                          result$Catch_nLL <- plr1$nll.catch
                                                          result$FishLen_nLL <- plr1$nll.length
@@ -504,7 +544,7 @@ do_retrospective1 <- function (n_retro, data, parameters, mapping, random = NULL
     
     retro_data$years <- data$years[1:(length(data$years) - j)]
     
-    retro_parameters$RecDevs <- retro_parameters$RecDevs <- parameters$RecDevs[1:(length(parameters$RecDevs) - j)]
+    retro_parameters$RecDevs <- parameters$RecDevs[seq_len(length(parameters$RecDevs) - j)]
     
     if (any(names(retro_mapping) == "RecDevs")) {
       retro_mapping$RecDevs <- parameters$RecDevs[1:(length(parameters$RecDevs) - j)]}
@@ -520,7 +560,7 @@ do_retrospective1 <- function (n_retro, data, parameters, mapping, random = NULL
     retro_data$length.nsamps <- data$length.nsamps[data$length.yrs<=max(retro_data$years)]
     retro_data$length.idx <- match(retro_data$length.yrs, retro_data$years) 
     
-    retro_parameters$logF <- parameters$logF[1:(length(data$years) - j)]
+    retro_parameters$logF <- parameters$logF[seq_len(length(data$years) - j)]
     
     retro_parameters$logq <- parameters$logq
     
@@ -541,18 +581,33 @@ do_retrospective1 <- function (n_retro, data, parameters, mapping, random = NULL
     obj <- RTMB::MakeADFun(func=nll_retro, parameters = parameters, 
                            map = mapping, random = random, silent = silent)
     if (do_optim == TRUE) {
-      optim <- stats::nlminb(obj$par, obj$fn, obj$gr)
-      try_improve <- tryCatch(expr = for (i in 1:newton_loops) {
-        g = as.numeric(obj$gr(optim$par))
-        h = optimHess(optim$par, fn = obj$fn, gr = obj$gr)
-        optim$par = optim$par - solve(h, g)
-        optim$objective = obj$fn(optim$par)
-      }, error = function(e) {
-        e
-      }, warning = function(w) {
-        w
-      })
+      optim <- stats::nlminb(obj$par, obj$fn, obj$gr,
+                             control = list(iter.max=2000, eval.max=4000))
+      if(is.finite(max(abs(obj$gr(optim$par))))&&max(abs(obj$gr(optim$par)))>1e-4){
+        tryCatch({
+          oldPar <- optim$par
+          oldObj <- optim$objective
+          
+          g <- obj$gr(oldPar)
+          h <- optimHess(oldPar, fn=obj$fn, gr=obj$gr)
+          
+          newPar <- oldPar- solve(h,g)
+          
+          if(all(is.finite(newPar))){
+            newObj <- obj$fn(newPar)
+            
+            if(is.finite(newObj) && newObj<oldObj){
+              optim$par <- newPar
+              optim$objective <- newObj
+            }else{obj$fn(oldPar)}
+          }else{obj$fn(oldPar)}
+        }, error = function(e) {
+          obj$fn(optim$par)
+          NULL
+        })
+      }
     }
+    optim$objective <- obj$fn(optim$par)
     obj$optim <- optim
     obj$sd_rep <- sdreport(obj)
     obj$rep <- as.list(obj$sd_rep, "Est", report=TRUE)
@@ -590,9 +645,11 @@ do_retrospective1 <- function (n_retro, data, parameters, mapping, random = NULL
           )
         )
       if (do_sdrep == TRUE) {
-        sdrep <- RTMB::sdreport(SPoRC_rtmb_model)
-        retro_tmp <- retro_tmp %>% dplyr::mutate(pdHess = sdrep$pdHess, 
-                                                 max_grad = max(abs(sdrep$gradient.fixed)))
+        #sdrep <- RTMB::sdreport(SPoRC_rtmb_model)
+        retro_tmp <- retro_tmp %>% dplyr::mutate(pdHess = SPoRC_rtmb_model$sd_rep$pdHess, 
+                                                 max_grad = max(abs(SPoRC_rtmb_model$sd_rep$gradient.fixed)),
+                                                 convergence = SPoRC_rtmb_model$optim$convergence,
+                                                 objective = SPoRC_rtmb_model$optim$objective)
       }
       retro_all <- rbind(retro_all, retro_tmp)
     }
@@ -631,9 +688,11 @@ do_retrospective1 <- function (n_retro, data, parameters, mapping, random = NULL
                                                      )
                                                    )
                                                  if (do_sdrep == TRUE) {
-                                                   sdrep <- RTMB::sdreport(SPoRC_rtmb_model)
-                                                   retro_tmp <- retro_tmp %>% dplyr::mutate(pdHess = sdrep$pdHess, 
-                                                                                            max_grad = max(abs(sdrep$gradient.fixed)))
+                                                   #sdrep <- RTMB::sdreport(SPoRC_rtmb_model)
+                                                   retro_tmp <- retro_tmp %>% dplyr::mutate(pdHess = SPoRC_rtmb_model$sd_rep$pdHess, 
+                                                                                            max_grad = max(abs(SPoRC_rtmb_model$sd_rep$gradient.fixed)),
+                                                                                            convergence = SPoRC_rtmb_model$optim$convergence,
+                                                                                            objective = SPoRC_rtmb_model$optim$objective)
                                                  }
                                                  p()
                                                  retro_tmp
@@ -934,9 +993,9 @@ saveRDS(list(BH_RP = BH_RP, SPR_RP = SPR_RP, fit=fit$par,
 
 #### jitter analysis ####
 
-n_cores <- 6; sd <- 0.2; n_jitter <- 50
+n_cores <- 6; sd <- 0.2; n_jitter <- 50; pars <- obj$env$parList(fit$par)
 starttime <- Sys.time()
-jit <- do_jitter1(data = dat, parameters = par, mapping = mapping, random = random, 
+jit <- do_jitter1(data = dat, parameters = pars, mapping = mapping, random = random, 
            sd = sd, n_jitter = n_jitter, do_par = TRUE, n_cores = n_cores)
 endtime <- Sys.time(); runtime <- endtime-starttime; round(runtime,2)
 
@@ -949,7 +1008,7 @@ saveRDS(list(jit,runtime), paste0(outdir,"/jitter_results.rds"))
 #### likelihood profiles (M and h) ####
 ## change range of M based on your data
 
-what <- c("M","h"); min_val <- c(0.26,0.5); max_val <- c(0.34,0.9); inc <- c(0.01,0.05); n_cores <- 6; pars <- obj$env$parList(obj$env$last.par.best)
+what <- c("M","h"); min_val <- c(0.15,0.5); max_val <- c(0.21,0.9); inc <- c(0.01,0.05);
 ## MUDAR PRA A ESPECIE
 profiles <- list()
 starttime <- Sys.time()
@@ -957,7 +1016,7 @@ for (i in 1:length(what)) {
   cat("Profiling", what[i], "\n")
 
   profiles[[what[i]]] <- do_likelihood_profile1(data = dat,
-                                                parameters = par,
+                                                parameters = pars,
                                                 mapping = mapping,
                                                 random = random,
                                                 what = what[i],
@@ -976,7 +1035,8 @@ saveRDS(list(profiles,runtime),paste0(outdir,"/likelihood_profiles.rds"))
 
 n_retro <- 5; n_cores <- 6
 starttime <- Sys.time()
-retro <- do_retrospective1(n_retro=n_retro, data=dat, parameters = par, mapping = mapping, random = random,do_par = TRUE, n_cores = n_cores)
+retro <- do_retrospective1(n_retro=n_retro, data=dat, parameters = pars, mapping = mapping, 
+                           random = random,do_par = TRUE, n_cores = n_cores)
 endtime <- Sys.time(); runtime <- endtime-starttime; round(runtime,2)
 
 unique(retro$peel) 
@@ -1130,7 +1190,7 @@ saveRDS(list(retro,retro_diff, runtime), paste0(outdir,"/retrospective.rds"))
   if(length(profiles)>=2){
     for (i in 1:length(profiles)) {
       png(paste0(outdir,"/likelihood_profiles_",
-                 ifelse(i==1,"NatM","Steepbh"),".png"), width = wd, height = ht, res = re)
+                 ifelse(i==2,"NatM","Steepbh"),".png"), width = wd, height = ht, res = re)
       
       plot(as.numeric(seq(min_val[[i]], max_val[[i]], inc[[i]])),
            profiles[[i]]$jnLL_df$value - min(profiles[[i]]$jnLL_df$value), 
