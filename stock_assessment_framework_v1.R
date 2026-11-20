@@ -6,13 +6,16 @@ library(SPoRC)
 library(scales)
 library(dplyr)
 library(parallel)
-#### data preparation ####
-cat <- read.csv("data/chrysurus.sc1.csv")
-ind <- read.csv("data/chrysurus.index.csv")
-len <- read.csv("data/chrysurus.LenComp.csv", header = FALSE)
+#### 1 data preparation ####
+
+sp <- "Lutjanus_jocu"
+
+cat <- read.csv(paste0("data/",sp,".sc1.csv"))
+ind <- read.csv(paste0("data/",sp,".index.csv"))
+len <- read.csv(paste0("data/",sp,".LenComp.csv"), header = FALSE)
 colnames(len) <- as.character(len[1,])
 len <- len[-1,]
-inputs <- readRDS(paste0(getwd(),"/data/chrysurus.input.rds"))
+inputs <- readRDS(paste0(getwd(),"/data/",sp,".input.rds"))
 
 dat <- list(
   years=as.vector(cat$Year),
@@ -54,18 +57,53 @@ par <- list(
   logdiff=log(as.numeric(inputs$Selpeak)-as.numeric(inputs$Sel50)),
   h=inputs$h,
   M=inputs$M_f_fix,
-  log.desc= log(10),
-  logSigmaF=log(0.2)
+  log.desc= log(10)
+  ,logSigmaF=log(0.2)
 )
 
-stk <- "Ocyurus_chrysurus_ME_NE" ##### name of stock
+stk <- paste0(sp,"_ME_NE") ##### name of stock
 
 outputs <- paste0(getwd(),"/outputs/")
 outdir <- paste0(outputs,stk)
 dir.create(outputs)
 dir.create(outdir)
 
-#### adapted functions from SPoRC ####
+#### 2 exploratory analysis ####
+{
+  wd <- 3000
+  ht <- 3000
+  re <- 300
+  png(paste0(outdir,"/input_data.png"), width = wd, height = ht, res = re)
+  par(mfrow = c(3, 1), mar = c(4, 4, 2, 1))
+  #catches
+  plot(dat$years, dat$catch, type="o", xlab="Year", ylab="Catch (t)", main=paste0(stk," catches"), pch=20, lwd=1)
+  polygon(x = c(dat$years[1], dat$years, dat$years[length(dat$years)]),y=c(0, dat$catch, 0),
+            col = adjustcolor("gray", alpha.f = 0.3),border = NA)
+  
+  #lengths
+  plot(as.numeric(colnames(dat$length.obs)), colSums(dat$length.obs)/sum(colSums(dat$length.obs)),
+       type = "l",lwd = 2,xlab = "Length (cm)",ylab = "Proportion",main = paste0(stk," length composition"))
+  polygon(c(as.numeric(colnames(dat$length.obs))[1], as.numeric(colnames(dat$length.obs)), 
+            as.numeric(colnames(dat$length.obs))[length(as.numeric(colnames(dat$length.obs)))]),
+          c(0, colSums(dat$length.obs)/sum(colSums(dat$length.obs)), 0),col = adjustcolor("gray", alpha.f = 0.3),border = NA)
+  #index
+  plot(dat$index.yrs, dat$index.obs, type="o", xlab="Year", ylab="Index", main=paste0(stk," index"), pch=20, lwd=1)
+  polygon(x = c(dat$index.yrs[1], dat$index.yrs, dat$index.yrs[length(dat$index.yrs)]),y=c(0, dat$index.obs, 0),
+          col = adjustcolor("gray", alpha.f = 0.3),border = NA)
+  
+  graphics.off()
+  
+  png(paste0(outdir,"/lencomps.png"), width = wd, height = ht, res = re)
+  par(mfrow = c(ceiling(sqrt(length(dat$length.yrs))), ceiling(sqrt(length(dat$length.yrs)))))
+  for(i in seq_along(dat$length.yrs)) {
+    plot(dat$length.obs[i, ],names.arg = as.numeric(colnames(dat$length.obs)),col = "grey70",
+         border = "white",main = dat$length.yrs[i],xlab = "Length (cm)",ylab = "Frequency",cex.names = 0.6,
+         cex.axis = 0.7,las = 2, type = "l", lwd=2, bty="n")
+    
+}
+graphics.off()
+}
+#### 3 adapted functions from SPoRC ####
 ## RPS
 Get_Reference_Points1 <- function (data, rep, SPR_x = NULL, t_spwn = 0,sex_ratio_f = 0.5, calc_rec_st_yr = 1, 
                                    rec_age = 1, type = "single_region", what="BH_MSY", n_avg_yrs = 1, 
@@ -257,6 +295,7 @@ do_jitter1 <- function (data, parameters, mapping, random = NULL, sd, n_jitter,
       })
       
       optim$objective <- obj$fn(optim$par)
+      optimized_parameters <- obj$env$parList(optim$par)
       obj$sd_rep <- RTMB::sdreport(obj)
       plr1 <- as.list(obj$sd_rep, "Est", report=TRUE)
       jitter_ts_df <- data.frame(
@@ -269,6 +308,8 @@ do_jitter1 <- function (data, parameters, mapping, random = NULL, sd, n_jitter,
       jitter_ts_df$Max_Gradient <-  max(abs(obj$sd_rep$gradient.fixed))
       jitter_ts_df$Convergence <- optim$convergence
       jitter_ts_df$Optim_Message <- optim$message
+      jitter_ts_df$Optim_Parameters <- I(rep(list(optimized_parameters), nrow(jitter_ts_df)))
+      jitter_ts_df$Optim_Par <- I(rep(list(optim$par), nrow(jitter_ts_df)))
       
       jitter_all <- rbind(jitter_all, jitter_ts_df)
     }
@@ -300,6 +341,7 @@ do_jitter1 <- function (data, parameters, mapping, random = NULL, sd, n_jitter,
                                                   }, error = function(e) e, warning = function(w) w)
                                                   
                                                   optim$objective <- obj$fn(optim$par)
+                                                  optimized_parameters <- obj$env$parList(optim$par)
                                                   obj$sd_rep <- RTMB::sdreport(obj)
                                                   plr1 <- as.list(obj$sd_rep, "Est", report=TRUE)
                                                   jitter_ts_df <- data.frame(
@@ -312,6 +354,8 @@ do_jitter1 <- function (data, parameters, mapping, random = NULL, sd, n_jitter,
                                                   jitter_ts_df$Max_Gradient <-  max(abs(obj$sd_rep$gradient.fixed))
                                                   jitter_ts_df$Convergence <- optim$convergence
                                                   jitter_ts_df$Optim_Message <- optim$message
+                                                  jitter_ts_df$Optim_Parameters <- I(rep(list(optimized_parameters), nrow(jitter_ts_df)))
+                                                  jitter_ts_df$Optim_Par <- I(rep(list(optim$par), nrow(jitter_ts_df)))
                                                   p()
                                                   jitter_ts_df
                                                 }, future.seed = TRUE) %>% bind_rows()
@@ -704,7 +748,7 @@ do_retrospective1 <- function (n_retro, data, parameters, mapping, random = NULL
 }
 
 
-#### model configuration ####
+#### 4 model configuration ####
 nll <- function(par){
   getAll(par,dat)
   ### loading data ####
@@ -737,17 +781,23 @@ nll <- function(par){
   La <- linf*(1-exp(-k*(ages-t0)))
   Wa <- aw*La^bw/1e6
   
-  kc <- log(0.95)/log(0.5)
-  peak <- (SL95-(sqrt(kc)*SL50))/(1-sqrt(kc))
-  ascWid <- (peak-SL50)/(sqrt((-2*log(0.5))))
-  desWid <- exp(log.desc)
-  wt <- 1/(1+exp(-5*(La-peak)))
-  Weff <- ascWid*(1-wt)+desWid*wt
-  
   if(selex=="dome"){
+    desWid <- exp(log.desc)
+    kc <- log(0.95)/log(0.5)
+    peak <- (SL95-(sqrt(kc)*SL50))/(1-sqrt(kc))
+    ascWid <- (peak-SL50)/(sqrt((-2*log(0.5))))
+    wt <- 1/(1+exp(-5*(La-peak)))
+    Weff <- ascWid*(1-wt)+desWid*wt
     Sa <- exp(-0.5*(((La-peak)/Weff)^2))
   }else{
-    desWid <- 1e6
+    #desWid <- 1e6
+    #kc <- log(0.95)/log(0.5)
+    #peak <- (SL95-(sqrt(kc)*SL50))/(1-sqrt(kc))
+    #ascWid <- (peak-SL50)/(sqrt((-2*log(0.5))))
+    #wt <- 1/(1+exp(-5*(La-peak)))
+    #Weff <- ascWid*(1-wt)+desWid*wt
+    #Sa <- exp(-0.5*(((La-peak)/Weff)^2))
+  
     Sa <- 1/(1+exp(-log(19)*((La-SL50)/(SL95-SL50))))
   }
 
@@ -918,6 +968,12 @@ nll <- function(par){
   ADREPORT(R0)
   ADREPORT(Wa)
   ADREPORT(Mata)
+  if(selex=="dome"){
+  ADREPORT(peak)
+  ADREPORT(ascWid)
+  ADREPORT(wt)
+  ADREPORT(Weff)
+  }
   ADREPORT(Sa)
   ADREPORT(nll.recdevs)
   ADREPORT(nll.catch)
@@ -931,24 +987,19 @@ nll <- function(par){
   ADREPORT(logPredC)
   ADREPORT(IndexPred)
   ADREPORT(Pmat)
-  ADREPORT(kc)
-  ADREPORT(peak)
-  ADREPORT(ascWid)
-  ADREPORT(wt)
-  ADREPORT(Weff)
-  
   #####  
   return(ret)
 }
 
-#### model fitting and quick diags ####
-{starttime <- Sys.time()
+#### 5 model fitting and quick diags ####
+starttime <- Sys.time()
 if(dat$selex=="logistic"){mapping <- list(M=factor(NA), h=factor(NA), log.desc=factor(NA))
 }else{mapping <- list(M=factor(NA), h=factor(NA))}
 
 random <- "RecDevs"
 obj <- MakeADFun(nll,par, random = random, map = mapping, silent = TRUE)
-fit <- nlminb(obj$par,obj$fn,obj$gr, control = list(iter.max = 2000, eval.max = 4000))
+fit <- nlminb(obj$par,obj$fn,obj$gr,
+              control = list(iter.max = 2000, eval.max = 4000))
 if(max(abs(obj$gr(fit$par)))>1e-4){
   tryCatch({
     oldPar <- fit$par
@@ -968,7 +1019,12 @@ if(max(abs(obj$gr(fit$par)))>1e-4){
       }
     }
   }, error = function(e) NULL)
-}
+  fit_new <- nlminb(start = fit$par,objective = obj$fn,gradient = obj$gr,
+                    control = list(iter.max = 2000, eval.max = 4000))
+
+
+if(is.finite(fit_new$objective)&&fit_new$objective<fit$objective){fit<-fit_new}
+
 obj$fn(fit$par)
 sdrep <- sdreport(obj, silent = TRUE)
 endtime <- Sys.time()
@@ -991,24 +1047,118 @@ saveRDS(list(BH_RP = BH_RP, SPR_RP = SPR_RP, fit=fit$par,
              plr= plr[c("SSB", "Rec", "B", "F", "Bratio", "SSB0", "R0")],
              plr_se= plr_se[c("SSB", "Rec", "B", "F", "Bratio", "SSB0", "R0")]), paste0(outdir,"/outputs.rds"))
 
-#### jitter analysis ####
+saveRDS(list(dat = dat,par_template = par,mapping = mapping,random = random,fit = fit,fit_par = fit$par,
+             diagnostics = list(objective = obj$fn(fit$par),max_gradient = max(abs(obj$gr(fit$par))),
+                                pdHess = sdrep$pdHess,convergence = fit$convergence,message = fit$message),runtime = runtime),
+        file.path(outdir, "fit_state.rds"))
 
-n_cores <- 6; sd <- 0.2; n_jitter <- 50; pars <- obj$env$parList(fit$par)
+
+#### 6 jitter analysis ####
+
+n_cores <- 6; sd <- 0.20; n_jitter <- 50; pars <- obj$env$parList(fit$par)
 starttime <- Sys.time()
 jit <- do_jitter1(data = dat, parameters = pars, mapping = mapping, random = random, 
            sd = sd, n_jitter = n_jitter, do_par = TRUE, n_cores = n_cores)
 endtime <- Sys.time(); runtime <- endtime-starttime; round(runtime,2)
 
+# Refit from the best valid jitter only when it improves on the step-5 fit.
+jit2 <- NULL
+runtime_jitter2 <- NULL
+jitter_runs <- jit[!duplicated(jit$jitter), ]
+valid_jitters <- with(jitter_runs,
+                      !is.na(Convergence) & Convergence == 0 &
+                        !is.na(Hessian) & Hessian & is.finite(Max_Gradient) &
+                        Max_Gradient <= 1e-4 & is.finite(jnLL))
+if (any(valid_jitters)) {
+  valid_rows <- which(valid_jitters)
+  best_jitter_row <- valid_rows[which.min(jitter_runs$jnLL[valid_rows])]
+  if (jitter_runs$jnLL[best_jitter_row] < fit$objective) {
+    jitter_start <- jitter_runs$Optim_Par[[best_jitter_row]]
+    jitter_refit <- nlminb(start = jitter_start, objective = obj$fn, gradient = obj$gr,
+                           control = list(iter.max = 2000, eval.max = 4000))
+    jitter_refit_gradient <- max(abs(obj$gr(jitter_refit$par)))
+    obj$fn(jitter_refit$par)
+    jitter_refit_sdrep <- sdreport(obj, silent = TRUE)
+
+    if (jitter_refit$convergence == 0 && is.finite(jitter_refit$objective) &&
+        jitter_refit_gradient <= 1e-4 && isTRUE(jitter_refit_sdrep$pdHess) &&
+        jitter_refit$objective < fit$objective) {
+      fit <- jitter_refit
+      sdrep <- jitter_refit_sdrep
+      pl <- as.list(sdrep, "Est")
+      plr <- as.list(sdrep, "Est", report = TRUE)
+      plr_se <- as.list(sdrep, "Std. Error", report = TRUE)
+      BH_RP <- Get_Reference_Points1(data = dat, rep = plr, SPR_x = 0.4,
+                                     M = par$M, h_trans = par$h)
+      SPR_RP <- Get_Reference_Points1(data = dat, rep = plr, SPR_x = 0.4,
+                                      M = par$M, h_trans = par$h, what = "SPR")
+      pars <- obj$env$parList(fit$par)
+
+      saveRDS(list(BH_RP = BH_RP, SPR_RP = SPR_RP, fit = fit$par,
+                   plr = plr[c("SSB", "Rec", "B", "F", "Bratio", "SSB0", "R0")],
+                   plr_se = plr_se[c("SSB", "Rec", "B", "F", "Bratio", "SSB0", "R0")]),
+              paste0(outdir, "/outputs.rds"))
+      saveRDS(list(dat = dat, par_template = par, mapping = mapping, random = random,
+                   fit = fit, fit_par = fit$par,
+                   diagnostics = list(objective = obj$fn(fit$par),
+                                      max_gradient = max(abs(obj$gr(fit$par))),
+                                      pdHess = sdrep$pdHess, convergence = fit$convergence,
+                                      message = fit$message), runtime = runtime),
+              file.path(outdir, "fit_state.rds"))
+      message("Accepted jitter start and updated fit; objective = ", fit$objective)
+
+      starttime_jitter2 <- Sys.time()
+      jit2 <- do_jitter1(data = dat, parameters = pars, mapping = mapping, random = random,
+        sd = sd, n_jitter = n_jitter, do_par = TRUE, n_cores = n_cores)
+      runtime_jitter2 <- Sys.time() - starttime_jitter2
+      saveRDS(list(jit = jit2, runtime = runtime_jitter2),
+        file.path(outdir, "jitter_results_2.rds"))
+    } else {
+      obj$fn(fit$par)
+      message("Jitter candidate refit did not pass convergence checks; retaining step-5 fit.")
+    }
+  } else {
+    message("No valid jitter improved the step-5 objective; retaining step-5 fit.")
+  }
+} else {
+  message("No jitter passed convergence, Hessian, and gradient checks; retaining step-5 fit.")
+}
+
+if (!is.null(jit2)) {
+  jit0 <- jit
+  runtime0 <- runtime
+
+  jit <- jit2
+  runtime <- runtime_jitter2
+}
+
 table(round(jit$jnLL, 3))
 sum(jit$Hessian == FALSE)
 range(jit$jnLL)
 
-saveRDS(list(jit,runtime), paste0(outdir,"/jitter_results.rds"))
+if (!is.null(jit2)) {
+  saveRDS(list(jit = jit, jit0 = jit0,
+    runtime = runtime, runtime0 = runtime0),
+    file.path(outdir, "jitter_results.rds"))
+} else {
+  saveRDS(list(jit = jit, runtime = runtime),
+    file.path(outdir, "jitter_results.rds"))
+}
 
-#### likelihood profiles (M and h) ####
+#### 7 likelihood profiles (M and h) ####
 ## change range of M based on your data
 
-what <- c("M","h"); min_val <- c(0.15,0.5); max_val <- c(0.21,0.9); inc <- c(0.01,0.05);
+if(sp=="Lutjanus_analis"){
+  l <- 0.15;h <- 0.21
+  }else if(sp=="Lutjanus_jocu"){
+    l <- 0.19;h <- 0.25
+    }else if(sp=="Lutjanus_synagris"){
+      l <- 0.20;h <- 0.27
+      }else if(sp=="Ocyurus_chrysurus"){
+        l <- 0.27;h <- 0.33
+        }
+
+what <- c("M","h"); min_val <- c(l,0.6); max_val <- c(h,0.8); inc <- c(0.01,0.05);
 ## MUDAR PRA A ESPECIE
 profiles <- list()
 starttime <- Sys.time()
@@ -1031,9 +1181,9 @@ endtime <- Sys.time(); runtime <- endtime-starttime; round(runtime,2)
 
 saveRDS(list(profiles,runtime),paste0(outdir,"/likelihood_profiles.rds"))
 
-#### retrospective ####
+#### 8 retrospective ####
 
-n_retro <- 5; n_cores <- 6
+n_retro <- 5;
 starttime <- Sys.time()
 retro <- do_retrospective1(n_retro=n_retro, data=dat, parameters = pars, mapping = mapping, 
                            random = random,do_par = TRUE, n_cores = n_cores)
@@ -1044,7 +1194,7 @@ retro_diff <- as.data.frame(SPoRC::get_retrospective_relative_difference(retro))
 
 saveRDS(list(retro,retro_diff, runtime), paste0(outdir,"/retrospective.rds"))
 
-#### plots ####
+#### 9 plots ####
 
 # 4 panel catch, index fit, lengths fit and selectivity
 {
@@ -1195,11 +1345,11 @@ saveRDS(list(retro,retro_diff, runtime), paste0(outdir,"/retrospective.rds"))
       plot(as.numeric(seq(min_val[[i]], max_val[[i]], inc[[i]])),
            profiles[[i]]$jnLL_df$value - min(profiles[[i]]$jnLL_df$value), 
            type = "b", pch = 19, lwd = 2, col = "black", cex = 0.8,
-           ylim = c(0, max(profiles[[i]]$jnLL_df$value - min(profiles[[i]]$jnLL_df$value),
+           ylim = c(0, max(3, max(profiles[[i]]$jnLL_df$value - min(profiles[[i]]$jnLL_df$value),
                            profiles[[i]]$Catch_nLL_df$value - min(profiles[[i]]$Catch_nLL_df$value),
                            profiles[[i]]$FishLen_nLL_df$value - min(profiles[[i]]$FishLen_nLL_df$value),
                            profiles[[i]]$FishIdx_nLL_df$value - min(profiles[[i]]$FishIdx_nLL_df$value),
-                           profiles[[i]]$rec_nLL_df$value - min(profiles[[i]]$rec_nLL_df$value)) * 1.1),
+                           profiles[[i]]$rec_nLL_df$value - min(profiles[[i]]$rec_nLL_df$value)) * 1.1)),
            xlab = ifelse(i==1,"Natural Mortality (M)","Steepness (h)"),
            ylab = expression(Delta ~ "Negative Log-Likelihood"),
            main = "Likelihood Profile Components")
@@ -1223,11 +1373,11 @@ saveRDS(list(retro,retro_diff, runtime), paste0(outdir,"/retrospective.rds"))
     plot(as.numeric(seq(min_val[[j]], max_val[[j]], inc[[j]])),
          profiles[[p]]$jnLL_df$value - min(profiles[[p]]$jnLL_df$value),
          type = "b", pch = 19, lwd = 2, col = "black", cex = 0.8,
-         ylim = c(0, max(profiles[[p]]$jnLL_df$value - min(profiles[[p]]$jnLL_df$value),
+         ylim = c(0, max(3, max(profiles[[p]]$jnLL_df$value - min(profiles[[p]]$jnLL_df$value),
                          profiles[[p]]$Catch_nLL_df$value - min(profiles[[p]]$Catch_nLL_df$value),
                          profiles[[p]]$FishLen_nLL_df$value - min(profiles[[p]]$FishLen_nLL_df$value),
                          profiles[[p]]$FishIdx_nLL_df$value - min(profiles[[p]]$FishIdx_nLL_df$value),
-                         profiles[[p]]$rec_nLL_df$value - min(profiles[[p]]$rec_nLL_df$value)) * 1.1),
+                         profiles[[p]]$rec_nLL_df$value - min(profiles[[p]]$rec_nLL_df$value)) * 1.1)),
          xlab = ifelse(j==1,"Natural Mortality (M)","Steepness (h)"),
          ylab = expression(Delta ~ "Negative Log-Likelihood"),
          main = "Likelihood Profile Components")
@@ -1260,8 +1410,32 @@ saveRDS(list(retro,retro_diff, runtime), paste0(outdir,"/retrospective.rds"))
   graphics.off()
 }
 
-####  ####
+# Kobe plot
+{
+  SSB_rel <- plr$SSB / BH_RP$b_ref_pt
+  F_rel <- plr$F / BH_RP$f_ref_pt
+  xlim <- c(0, max(1.5, SSB_rel, na.rm = TRUE) * 1.05)
+  ylim <- c(0, max(1.5, F_rel, na.rm = TRUE) * 1.05)
+
+  png(file.path(outdir, "kobe_plot.png"), width = 2400, height = 2000, res = 300)
+  plot(SSB_rel, F_rel, type = "n", xlim = xlim, ylim = ylim,
+       xlab = expression(SSB/SSB[MSY]), ylab = expression(F/F[MSY]),
+       main = paste(stk, "- Kobe plot"))
+  rect(0, 0, 1, 1, col = adjustcolor("orange", alpha.f = 0.2), border = NA)
+  rect(0, 1, 1, ylim[2], col = adjustcolor("red", alpha.f = 0.15), border = NA)
+  rect(1, 0, xlim[2], 1, col = adjustcolor("green3", alpha.f = 0.18), border = NA)
+  rect(1, 1, xlim[2], ylim[2], col = adjustcolor("gold", alpha.f = 0.2), border = NA)
+  abline(v = 1, h = 1, lty = 2)
+  lines(SSB_rel, F_rel, type = "o", pch = 16)
+  text(SSB_rel[length(SSB_rel)], F_rel[length(F_rel)],
+       labels = tail(dat$years, 1), pos = 4, cex = 0.8)
+  graphics.off()
+}
+
+#### end ####
 warning("End of ",stk, " assessment")
+
+
 
 
 
