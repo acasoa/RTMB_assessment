@@ -1,5 +1,7 @@
+#### 0 load packages ####
 #rm(list = ls())
 #gc()
+stTime <- Sys.time()
 setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
 library(RTMB)
 library(SPoRC)
@@ -8,14 +10,15 @@ library(dplyr)
 library(parallel)
 #### 1 data preparation ####
 
-sp <- "Lutjanus_jocu"
+sp <- "Ocyurus_chrysurus"
 
 cat <- read.csv(paste0("data/",sp,".sc1.csv"))
 ind <- read.csv(paste0("data/",sp,".index.csv"))
-len <- read.csv(paste0("data/",sp,".LenComp.csv"), header = FALSE)
+{len <- read.csv(paste0("data/",sp,".LenComp.csv"), header = FALSE)
 colnames(len) <- as.character(len[1,])
-len <- len[-1,]
-inputs <- readRDS(paste0(getwd(),"/data/",sp,".input.rds"))
+len <- len[-1,]}
+input <- read.csv(paste0("data/",sp,"_LH.csv"))
+
 
 dat <- list(
   years=as.vector(cat$Year),
@@ -28,19 +31,18 @@ dat <- list(
   length.idx=as.vector(match(len$Year,cat$Year)),
   length.nsamps=as.vector(as.numeric(len$Nsamps)),
   length.bins=as.vector(as.numeric(colnames(len)[6:ncol(len)])),
-  linf=inputs$Linf_f_fix,
-  k=inputs$k_f_fix,
-  t0=inputs$t0_f_fix,
-  aw=inputs$WLa_f_fix,
-  bw=inputs$WLb_f_fix
-  ,Amax=inputs$Nages_in,
-  ages=as.vector(1:inputs$Nages_in),
-  CV_len = as.vector(inputs$CV_lt_f_old_mean),
-  sigma_R = inputs$sigmaR,
-  L50=inputs$L50_f_fix,
-  L95=inputs$L95_f_fix
+  linf=input$Linf,
+  k=input$k,
+  t0=input$t0,
+  aw=input$aw,
+  bw=input$bw
+  ,Amax=input$Amax,
+  ages=as.vector(1:input$Amax),
+  CV_len = 0.1,
+  L50=input$L50,
+  L95=input$L95
   ,rec=1,
-  ESS=FALSE,
+  ESS=TRUE,
   n_fish_fleets=1,
   selex="logistic" #or "dome"
 )
@@ -48,17 +50,17 @@ dat <- list(
 par <- list(
   logR0=log(100000),
   logq=log(0.001),
-  logF=rep(log(0.2),length(dat$years)),
-  logSigmaIdx=0,
-  #logSigmaRec=0,
-  #logSigmaC=0,
-  RecDevs=rep(0,length(dat$years)),
-  logSL50=log(as.numeric(inputs$Sel50)),
-  logdiff=log(as.numeric(inputs$Selpeak)-as.numeric(inputs$Sel50)),
-  h=inputs$h,
-  M=inputs$M_f_fix,
+  logF=rep(log(0.2),length(as.vector(cat$Year))),
+  logSigmaIdx=log(0.2),
+  logSigmaR=log(0.5),
+  logSigmaC=log(0.2),
+  RecDevs=rep(0,length(as.vector(cat$Year))),
+  logSL50=log(input$SL50),
+  logdiff=log(diff(c(input$SL50, input$SL95))),
+  h=input$h,
+  M=input$M,
   log.desc= log(10)
-  ,logSigmaF=log(0.2)
+  ,logSigmaF=log(0.5)
 )
 
 stk <- paste0(sp,"_ME_NE") ##### name of stock
@@ -751,6 +753,7 @@ do_retrospective1 <- function (n_retro, data, parameters, mapping, random = NULL
 #### 4 model configuration ####
 nll <- function(par){
   getAll(par,dat)
+  
   ### loading data ####
   if (!exists("rec")) {
     warning("Recruitment assumed flat", call. = FALSE)
@@ -771,8 +774,8 @@ nll <- function(par){
   q <- exp(logq)
   Fi <- exp(logF)
   sigmaIdx <- exp(logSigmaIdx)
-  sigmaRec <- sigma_R
-  sigmaC <- 0.2
+  sigmaRec <- exp(logSigmaR)
+  sigmaC <- exp(logSigmaC)
   SL50 <- exp(logSL50)
   SL95 <- SL50 + exp(logdiff)
   
@@ -786,20 +789,16 @@ nll <- function(par){
     kc <- log(0.95)/log(0.5)
     peak <- (SL95-(sqrt(kc)*SL50))/(1-sqrt(kc))
     ascWid <- (peak-SL50)/(sqrt((-2*log(0.5))))
-    wt <- 1/(1+exp(-5*(La-peak)))
-    Weff <- ascWid*(1-wt)+desWid*wt
-    Sa <- exp(-0.5*(((La-peak)/Weff)^2))
+    wt <- plogis(20*(La-peak)/(1+abs(La-peak)))
+    Sa <- (1-wt)*exp(-0.5*((La-peak)/ascWid)^2)+wt*exp(-0.5*((La-peak)/desWid)^2)
   }else{
-    #desWid <- 1e6
-    #kc <- log(0.95)/log(0.5)
-    #peak <- (SL95-(sqrt(kc)*SL50))/(1-sqrt(kc))
-    #ascWid <- (peak-SL50)/(sqrt((-2*log(0.5))))
-    #wt <- 1/(1+exp(-5*(La-peak)))
-    #Weff <- ascWid*(1-wt)+desWid*wt
-    #Sa <- exp(-0.5*(((La-peak)/Weff)^2))
-  
-    Sa <- 1/(1+exp(-log(19)*((La-SL50)/(SL95-SL50))))
-  }
+    desWid <- 1e4
+    kc <- log(0.95)/log(0.5)
+    peak <- (SL95-(sqrt(kc)*SL50))/(1-sqrt(kc))
+    ascWid <- (peak-SL50)/(sqrt((-2*log(0.5))))
+    wt <- plogis(20*(La-peak)/(1+abs(La-peak)))
+    Sa <- (1-wt)*exp(-0.5*((La-peak)/ascWid)^2)+wt*exp(-0.5*((La-peak)/desWid)^2)
+    }
 
   Mata=1/(1+exp(-log(19)*(La-L50)/(L95-L50)))
   
@@ -926,7 +925,7 @@ nll <- function(par){
   Pmat <- Pmat[length.idx,]
   
   length.prop <- length.obs/rowSums(length.obs)
-  length.ESS <- length.nsamps*5
+  length.ESS <- length.nsamps*2
   length.adjusted <- length.prop*length.ESS
   
   nll.length.i <- rep(0,nrow(Pmat))
@@ -958,7 +957,9 @@ nll <- function(par){
   B<- colSums(N*Wa)
   F <- apply(Fmat, 2, max) 
   Bratio <- SSB/SSB0
-  
+  SLdiff <- SL95-SL50
+
+  ADREPORT(logSigmaC)
   ADREPORT(SSB0)
   ADREPORT(SSB)
   ADREPORT(Bratio)
@@ -968,12 +969,12 @@ nll <- function(par){
   ADREPORT(R0)
   ADREPORT(Wa)
   ADREPORT(Mata)
-  if(selex=="dome"){
+  ADREPORT(SL50)
+  ADREPORT(SL95)
+  ADREPORT(SLdiff)
   ADREPORT(peak)
   ADREPORT(ascWid)
   ADREPORT(wt)
-  ADREPORT(Weff)
-  }
   ADREPORT(Sa)
   ADREPORT(nll.recdevs)
   ADREPORT(nll.catch)
@@ -993,9 +994,13 @@ nll <- function(par){
 
 #### 5 model fitting and quick diags ####
 starttime <- Sys.time()
-if(dat$selex=="logistic"){mapping <- list(M=factor(NA), h=factor(NA), log.desc=factor(NA))
-}else{mapping <- list(M=factor(NA), h=factor(NA))}
-
+## fixed parameters
+mapping <- list(M=factor(NA), h=factor(NA), logSigmaF=factor(NA), logSigmaR=factor(NA), logSigmaC=factor(NA))
+if(dat$selex=="logistic"){
+  #RTMB::TapeConfig(comparison="tape")
+  mapping$log.desc <- factor(NA)
+}
+# random effects
 random <- "RecDevs"
 obj <- MakeADFun(nll,par, random = random, map = mapping, silent = TRUE)
 fit <- nlminb(obj$par,obj$fn,obj$gr,
@@ -1006,9 +1011,9 @@ if(max(abs(obj$gr(fit$par)))>1e-4){
     oldObj <- fit$objective
     
     g <- obj$gr(fit$par)
-    h <- optimHess(fit$par, fn=obj$fn, gr=obj$gr)
+    he <- optimHess(fit$par, fn=obj$fn, gr=obj$gr)
     
-    newPar <- oldPar- solve(h,g)
+    newPar <- oldPar- solve(he,g)
     
     if(all(is.finite(newPar))){
       newObj <- obj$fn(newPar)
@@ -1026,15 +1031,10 @@ if(max(abs(obj$gr(fit$par)))>1e-4){
 if(is.finite(fit_new$objective)&&fit_new$objective<fit$objective){fit<-fit_new}
 
 obj$fn(fit$par)
-sdrep <- sdreport(obj, silent = TRUE)
+sdrep <- sdreport(obj, silent = F)
 endtime <- Sys.time()
 runtime <- endtime-starttime
 round(runtime,2)}
-
-fit$par
-fit$convergence
-max(abs(obj$gr(fit$par)))
-sdrep$pdHess
 
 pl <- as.list(sdrep, "Est")
 plr <- as.list(sdrep, "Est", report=TRUE)
@@ -1042,6 +1042,12 @@ plr_se <- as.list(sdrep, "Std. Error", report = TRUE)
 
 BH_RP <- Get_Reference_Points1(data = dat,rep = plr,SPR_x = 0.4, M = par$M, h_trans = par$h)
 SPR_RP <- Get_Reference_Points1(data = dat,rep = plr,SPR_x = 0.4, M = par$M, h_trans = par$h, what = "SPR")
+
+fit$par
+fit$convergence
+max(abs(obj$gr(fit$par)))
+sdrep$pdHess
+
 
 saveRDS(list(BH_RP = BH_RP, SPR_RP = SPR_RP, fit=fit$par, 
              plr= plr[c("SSB", "Rec", "B", "F", "Bratio", "SSB0", "R0")],
@@ -1149,17 +1155,17 @@ if (!is.null(jit2)) {
 ## change range of M based on your data
 
 if(sp=="Lutjanus_analis"){
-  l <- 0.15;h <- 0.21
+  lo <- 0.15;hi <- 0.21
   }else if(sp=="Lutjanus_jocu"){
-    l <- 0.19;h <- 0.25
+    lo <- 0.19;hi <- 0.25
     }else if(sp=="Lutjanus_synagris"){
-      l <- 0.20;h <- 0.27
+      lo <- 0.20;hi <- 0.27
       }else if(sp=="Ocyurus_chrysurus"){
-        l <- 0.27;h <- 0.33
+        lo <- 0.27;hi <- 0.33
         }
 
-what <- c("M","h"); min_val <- c(l,0.6); max_val <- c(h,0.8); inc <- c(0.01,0.05);
-## MUDAR PRA A ESPECIE
+what <- c("M","h"); min_val <- c(lo,0.5); max_val <- c(hi,0.9); inc <- c(0.01,0.05);
+
 profiles <- list()
 starttime <- Sys.time()
 for (i in 1:length(what)) {
@@ -1234,20 +1240,20 @@ saveRDS(list(retro,retro_diff, runtime), paste0(outdir,"/retrospective.rds"))
   
   # selectivity 
   Lseq <- seq(0, max(dat$length.bins), length.out = 200)
-  wt <- 1 / (1 + exp(-5 * (Lseq - as.numeric(plr$peak))))
-  Weff <- as.numeric(plr$ascWid) * (1 - wt) + 
-    if(dat$selex=="dome"){exp(fit$par["log.desc"])*wt}else{exp(exp(par$log.desc))*wt}
   if(dat$selex=="dome"){
-    Sa <- exp(-0.5 * (((Lseq - as.numeric(plr$peak)) / Weff)^2))
-    }else{
-    Sa <- 1/(1+exp(-log(19)*((Lseq - exp(fit$par["logSL50"]))/
-                               ((exp(fit$par["logSL50"])+exp(fit$par["logdiff"])) - 
-                                  exp(fit$par["logSL50"])))))
+    wt <- plogis(20 * (Lseq - as.numeric(plr$peak))/(1 + abs(Lseq - as.numeric(plr$peak))))
+    Sa <- (1-wt)*exp(-0.5*((Lseq-as.numeric(plr$peak))/as.numeric(plr$ascWid))^2) + 
+      wt*exp(-0.5*((Lseq-as.numeric(plr$peak))/exp(fit$par["log.desc"]))^2)
+  }else{
+    wt <- plogis(20 * (Lseq - as.numeric(plr$peak))/(1 + abs(Lseq - as.numeric(plr$peak))))
+  Sa <- (1-wt)*exp(-0.5*((Lseq-as.numeric(plr$peak))/as.numeric(plr$ascWid))^2) + 
+    wt*exp(-0.5*((Lseq-as.numeric(plr$peak))/1e4)^2)
   }
-  plot(Lseq,Sa,xlab = "Length (cm)", ylab = "Selectivity", 
+  
+  plot(Lseq, Sa, xlab = "Length (cm)", ylab = "Selectivity", 
        main = paste("Selectivity Curve (", dat$selex, ")", sep = ""),
        type = "l", lwd = 2.5, col = "darkblue")
-
+  
   graphics.off()
 }
 
@@ -1259,7 +1265,7 @@ saveRDS(list(retro,retro_diff, runtime), paste0(outdir,"/retrospective.rds"))
   ht <- 4000
   re <- 300
   png(paste0(outdir,"/residuals_plots.png"), width = wd, height = ht, res = re)
-  par(mfrow=c(2,1))
+  par(mfrow=c(2,1), mar=c(4,4,2,1))
   
   # catch residuals
   resid.catch <- log(dat$catch) - plr$logPredC
@@ -1284,33 +1290,43 @@ saveRDS(list(retro,retro_diff, runtime), paste0(outdir,"/retrospective.rds"))
   #x11()
   png(paste0(outdir,"/results_2x2.png"), width = wd, height = ht, res = re)
   par(mfrow=c(2,2))
+  # B
   plot(dat$years,plr$B, ylim = c(0,max(plr$B + 1.96 * plr_se$B)), pch=20,
        xlab = "Year",ylab = "Biomass (t)", main = "Total Biomass")
   lines(dat$years,plr$B)
   lines(dat$years,plr$B - 1.96 * plr_se$B, lty=2)
   lines(dat$years,plr$B + 1.96 * plr_se$B, lty=2)
   
+  # Bratio
   plot(dat$years,plr$Bratio, 
        ylim = c(0,as.numeric(number(max(plr$Bratio + 1.96 * plr_se$Bratio),0.1))), pch=20,
        xlab = "Year", ylab = expression(Depletion ~ (SSB / SSB[0])), main = "Stock Depletion (Bratio)")
   lines(dat$years,plr$Bratio)
   lines(dat$years,plr$Bratio - 1.96 * plr_se$Bratio, lty=2)
   lines(dat$years,plr$Bratio + 1.96 * plr_se$Bratio, lty=2)
+  abline(h=1, col="red", lty=2)
   abline(h=BH_RP$b_ref_pt/BH_RP$virgin_b_ref_pt, col="red", lty=2)
   text(x = min(dat$years) + 4,y = BH_RP$b_ref_pt/BH_RP$virgin_b_ref_pt,
-       labels = expression("Management target"), pos = 3,col = "black",cex = 0.7)
-  abline(h=BH_RP$b_ref_pt/BH_RP$virgin_b_ref_pt/2, col="red", lty=2)
-  text(x = min(dat$years) + 4,y = BH_RP$b_ref_pt/BH_RP$virgin_b_ref_pt/2,
-       labels = expression("Overfishing limit"), pos = 3,col = "black",cex = 0.7)
-  
+       labels = expression(SSB[msy] / SSB[0]), pos = 3,col = "black",cex = 0.9)
+  #abline(h=BH_RP$b_ref_pt/BH_RP$virgin_b_ref_pt/2, col="red", lty=2)
+  #text(x = min(dat$years) + 4,y = BH_RP$b_ref_pt/BH_RP$virgin_b_ref_pt/2,
+  #     labels = expression("Limit Reference Point"), pos = 3,col = "black",cex = 0.7)
+  # RecDevs
   plot(dat$years,plr$Rec/1e6, pch=20,
        xlab = "Year", ylab = "Age-0 recruits (Millions)", main = "Recruitment")
   lines(dat$years,plr$Rec/1e6)
-  plot(dat$years,plr$F, pch=20, ylim = c(0,max(plr$F + 1.96*plr_se$F)),
-       xlab = "Year", ylab = "F", main = "Fishing Mortality")
-  arrows(dat$years, plr$F - 1.96*plr_se$F,
-         dat$years, plr$F + 1.96*plr_se$F,
+  
+  # F
+  plot(dat$years,plr$F/BH_RP$f_ref_pt, pch=20, 
+    ylim = c(0,max(plr$F/BH_RP$f_ref_pt + 1.96*plr_se$F/BH_RP$f_ref_pt)+0.5),
+       xlab = "Year", ylab = "Relative F", main = "Fishing Mortality")
+  arrows(dat$years, plr$F/BH_RP$f_ref_pt - 1.96*plr_se$F/BH_RP$f_ref_pt,
+         dat$years, plr$F/BH_RP$f_ref_pt + 1.96*plr_se$F/BH_RP$f_ref_pt,
          angle=0, code=3, length=0.02)
+  abline(h=1, col="red", lty=2)
+  text(x = min(dat$years) + 4,y = 1,
+       labels = expression(F[msy]), pos = 3,col = "black",cex = 0.9)
+  
   graphics.off()
 
 }
@@ -1320,13 +1336,14 @@ saveRDS(list(retro,retro_diff, runtime), paste0(outdir,"/retrospective.rds"))
   wd <- 4000
   ht <- 3000
   re <- 300
-  jit <- jit[!is.na(jit$jnLL),]
+  jit <- jit[!is.na(jit$jnLL)&jit$Convergence==0,]
   png(paste0(outdir,"/jitter.png"), width = wd, height = ht, res = re)
-  plot(jit$jitter, jit$jnLL, pch=20, col=ifelse(jit$jnLL > (min(jit$jnLL*1.05)), "darkred", "darkblue"),
+  plot(jit$jitter, jit$jnLL, pch=20, col=ifelse(jit$jnLL > min(jit$jnLL) + 2, "darkred", "darkblue"),
        xlab = "Jitter run", ylab = "Negative log likelihood value",
-       ylim = c(min(jit$jnLL) - 0.01, median(jit$jnLL) + 0.01),
-       main = "Jitter NLL Distribution"); abline(h=mean(jit$jnLL))
-  legend("topright", legend = c("Converged (Optimal)", "Local minimum (Outlier)", "Mean NLL"), 
+       ylim = c(min(jit$jnLL)-0.05, min(jit$jnLL)+max(2,1.05*diff(range(jit$jnLL)))),
+       main = "Jitter NLL Distribution"); 
+  abline(h=min(jit$jnLL))
+  legend("topright", legend = c("Converged (Optimal)", "Local minimum (Outlier)", "Min NLL"), 
          col = c("darkblue", "darkred", "black"), 
          pch = c(20, 20, NA), lty = c(NA, NA, 1), bty = "n")
   graphics.off()
@@ -1340,7 +1357,7 @@ saveRDS(list(retro,retro_diff, runtime), paste0(outdir,"/retrospective.rds"))
   if(length(profiles)>=2){
     for (i in 1:length(profiles)) {
       png(paste0(outdir,"/likelihood_profiles_",
-                 ifelse(i==2,"NatM","Steepbh"),".png"), width = wd, height = ht, res = re)
+                 ifelse(i==1,"NatM","Steepbh"),".png"), width = wd, height = ht, res = re)
       
       plot(as.numeric(seq(min_val[[i]], max_val[[i]], inc[[i]])),
            profiles[[i]]$jnLL_df$value - min(profiles[[i]]$jnLL_df$value), 
@@ -1433,15 +1450,12 @@ saveRDS(list(retro,retro_diff, runtime), paste0(outdir,"/retrospective.rds"))
 }
 
 #### end ####
-warning("End of ",stk, " assessment")
+enTime <- Sys.time()
+totalTime <- enTime-stTime
 
+warning("End of ",stk, " assessment", " in ", print(round(totalTime,2)))
 
-
-
-
-
-
-
+#### --- ####
 
 
 
