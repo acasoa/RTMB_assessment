@@ -218,7 +218,7 @@ Get_Reference_Points1 <- function (data, rep, SPR_x = NULL, t_spwn = 0,sex_ratio
     }
     
     if (what == "SPR") {
-      data_list$SPR_x <- SPR_x
+            data_list$SPR_x <- SPR_x
       par_list <- list()
       par_list$log_F_x <- log(0.1)
       
@@ -234,7 +234,11 @@ Get_Reference_Points1 <- function (data, rep, SPR_x = NULL, t_spwn = 0,sex_ratio
         "\nMaximum absolute gradient: ",
         max(abs(obj$gr(obj$optim$par)))
       )
-      
+      if (obj$optim$convergence != 0 ||
+        !is.finite(obj$optim$objective) ||
+        max(abs(obj$gr(obj$optim$par))) > 1e-4) {
+        stop("Reference point optimization failed.")
+      }
       obj$rep <- obj$report(obj$optim$par)
       f_ref_pt[1] <- obj$rep$F_x
       b_ref_pt[1] <- obj$rep$SB_F_x * rep$R0
@@ -258,7 +262,11 @@ Get_Reference_Points1 <- function (data, rep, SPR_x = NULL, t_spwn = 0,sex_ratio
         "\nMaximum absolute gradient: ",
         max(abs(obj$gr(obj$optim$par)))
       )
-      
+      if (obj$optim$convergence != 0 ||
+        !is.finite(obj$optim$objective) ||
+        max(abs(obj$gr(obj$optim$par))) > 1e-4) {
+        stop("Reference point optimization failed.")
+      }
       obj$rep <- obj$report(obj$optim$par)
       f_ref_pt[1] <- obj$rep$Fmsy
       b_ref_pt[1] <- obj$rep$Bmsy
@@ -285,18 +293,31 @@ do_jitter1 <- function (data, parameters, mapping, random = NULL, sd, n_jitter,
                                                  0, sd)
       optim <- stats::nlminb(jitter_pars, obj$fn, obj$gr, 
                              control = list(iter.max = 2000, eval.max = 4000))
-      try_improve <- tryCatch(expr = for (j in seq_len(n_newton_loops)) {
-        g = as.numeric(obj$gr(optim$par))
-        h = optimHess(optim$par, fn = obj$fn, gr = obj$gr)
-        optim$par = optim$par - solve(h, g)
-        optim$objective = obj$fn(optim$par)
-      }, error = function(e) {
-        e
-      }, warning = function(w) {
-        w
-      })
-      
+      if(optim$convergence==0&&is.finite(optim$objective)&&
+        all(is.finite(optim$par))&&is.finite(max(abs(obj$gr(optim$par))))&&
+        max(abs(obj$gr(optim$par)))>1e-4){
+        try_improve <- tryCatch({
+          oldPar <- optim$par
+          oldObj <- optim$objective
+
+          for (j in seq_len(n_newton_loops)) {
+            g <- as.numeric(obj$gr(oldPar))
+            h <- optimHess(oldPar, fn = obj$fn, 
+                          gr = obj$gr)
+            newPar <- optim$par - solve(h, g)
+            
+            if(all(is.finite(newPar))){
+            newObj <- obj$fn(newPar)
+              if(is.finite(newObj) && newObj<oldObj){
+                optim$par <- newPar
+                optim$objective <- newObj
+              }
+            }
+          }
+        }, error = function(e) e, warning = function(w) w)
+      }
       optim$objective <- obj$fn(optim$par)
+      obj$fn(optim$par)
       optimized_parameters <- obj$env$parList(optim$par)
       obj$sd_rep <- RTMB::sdreport(obj)
       plr1 <- as.list(obj$sd_rep, "Est", report=TRUE)
@@ -332,17 +353,31 @@ do_jitter1 <- function (data, parameters, mapping, random = NULL, sd, n_jitter,
                                                                                              0, sd)
                                                   optim <- stats::nlminb(jitter_pars, obj$fn, 
                                                                          obj$gr, control = list(iter.max = 2000, eval.max = 4000))
-                                                  try_improve <- tryCatch({
-                                                    for (j in seq_len(n_newton_loops)) {
-                                                      g <- as.numeric(obj$gr(optim$par))
-                                                      h <- optimHess(optim$par, fn = obj$fn, 
-                                                                     gr = obj$gr)
-                                                      optim$par <- optim$par - solve(h, g)
-                                                      optim$objective <- obj$fn(optim$par)
-                                                    }
-                                                  }, error = function(e) e, warning = function(w) w)
-                                                  
+                                                  if(optim$convergence==0&&is.finite(optim$objective)&&
+                                                    all(is.finite(optim$par))&&is.finite(max(abs(obj$gr(optim$par))))&&
+                                                    max(abs(obj$gr(optim$par)))>1e-4){
+                                                    try_improve <- tryCatch({
+                                                      oldPar <- optim$par
+                                                      oldObj <- optim$objective
+
+                                                      for (j in seq_len(n_newton_loops)) {
+                                                        g <- as.numeric(obj$gr(oldPar))
+                                                        h <- optimHess(oldPar, fn = obj$fn, 
+                                                                      gr = obj$gr)
+                                                        newPar <- optim$par - solve(h, g)
+                                                        
+                                                        if(all(is.finite(newPar))){
+                                                        newObj <- obj$fn(newPar)
+                                                          if(is.finite(newObj) && newObj<oldObj){
+                                                            optim$par <- newPar
+                                                            optim$objective <- newObj
+                                                          }
+                                                        }
+                                                      }
+                                                    }, error = function(e) e, warning = function(w) w)
+                                                  }
                                                   optim$objective <- obj$fn(optim$par)
+                                                  obj$fn(optim$par)
                                                   optimized_parameters <- obj$env$parList(optim$par)
                                                   obj$sd_rep <- RTMB::sdreport(obj)
                                                   plr1 <- as.list(obj$sd_rep, "Est", report=TRUE)
@@ -826,7 +861,7 @@ nll <- function(par){
     }
     
     for (a in 1:(Amax-1)) {
-      N[a+1,1] <- R0*exp(-M*a)
+      N[a+1,1] <- R0*exp(RecDevs[1] - 0.5*sigmaRec^2)*exp(-M*a)
     }
     N[Amax,1] <- N[Amax-1,1]*exp(-M)/(1-exp(-M))
     
@@ -841,7 +876,7 @@ nll <- function(par){
     # 1st row = recruitment
     N[1,1] <- R0*exp(RecDevs[1] - 0.5*sigmaRec^2)
     for (a in 1:(Amax-1)) {
-      N[a+1,1] <- R0*exp(-M*a)
+      N[a+1,1] <- R0*exp(RecDevs[1] - 0.5*sigmaRec^2)*exp(-M*a)
     }
     N[Amax,1] <- N[Amax-1,1]*exp(-M)/(1-exp(-M))
     
@@ -860,7 +895,7 @@ nll <- function(par){
     # 1st row = recruitment
     N[1,1] <- R0*exp(RecDevs[1] - 0.5*sigmaRec^2)
     for (a in 1:(Amax-1)) {
-      N[a+1,1] <- R0*exp(-M*a)
+      N[a+1,1] <- R0*exp(RecDevs[1] - 0.5*sigmaRec^2)*exp(-M*a)
     }
     N[Amax,1] <- N[Amax-1,1]*exp(-M)/(1-exp(-M))
     
@@ -1164,7 +1199,7 @@ if(sp=="Lutjanus_analis"){
         lo <- 0.27;hi <- 0.33
         }
 
-what <- c("M","h"); min_val <- c(lo,0.5); max_val <- c(hi,0.9); inc <- c(0.01,0.05);
+what <- c("M","h","logq","logR0"); min_val <- c(lo,0.5,pars$logR0-0.5,pars$logq-0.5); max_val <- c(hi,0.9,pars$logR0+0.5,pars$logq+0.5); inc <- c(0.01,0.05,0.1,0.1)
 
 profiles <- list()
 starttime <- Sys.time()
@@ -1357,7 +1392,8 @@ saveRDS(list(retro,retro_diff, runtime), paste0(outdir,"/retrospective.rds"))
   if(length(profiles)>=2){
     for (i in 1:length(profiles)) {
       png(paste0(outdir,"/likelihood_profiles_",
-                 ifelse(i==1,"NatM","Steepbh"),".png"), width = wd, height = ht, res = re)
+                 ifelse(i==1,"NatM",ifelse(i==2,"Steepbh",
+                   ifelse(i==3,"logqCoef","logR0"))),".png"), width = wd, height = ht, res = re)
       
       plot(as.numeric(seq(min_val[[i]], max_val[[i]], inc[[i]])),
            profiles[[i]]$jnLL_df$value - min(profiles[[i]]$jnLL_df$value), 
@@ -1367,7 +1403,8 @@ saveRDS(list(retro,retro_diff, runtime), paste0(outdir,"/retrospective.rds"))
                            profiles[[i]]$FishLen_nLL_df$value - min(profiles[[i]]$FishLen_nLL_df$value),
                            profiles[[i]]$FishIdx_nLL_df$value - min(profiles[[i]]$FishIdx_nLL_df$value),
                            profiles[[i]]$rec_nLL_df$value - min(profiles[[i]]$rec_nLL_df$value)) * 1.1)),
-           xlab = ifelse(i==1,"Natural Mortality (M)","Steepness (h)"),
+           xlab = ifelse(i==1,"Natural Mortality (M)",ifelse(i==2,"Steepness (h)",
+                   ifelse(i==3,"Catchability coefficient (log)","Unfished Recruitment (log)"))),
            ylab = expression(Delta ~ "Negative Log-Likelihood"),
            main = "Likelihood Profile Components")
       
@@ -1385,8 +1422,10 @@ saveRDS(list(retro,retro_diff, runtime), paste0(outdir,"/retrospective.rds"))
     }
   }else{
     png(paste0(outdir,"/likelihood_profiles_",
-               ifelse(names(profiles[1])=="M","NatM","Steepbh"),".png"), width = wd, height = ht, res = re)
-    ifelse(names(profiles[1])=="M",j <- 1,j <- 2); p=1
+      ifelse(names(profiles)[1]=="M","NatM",
+        ifelse(names(profiles)[1]=="h","Steepbh",
+          ifelse(names(profiles)[1]=="logq","logqCoef","logR0"))),".png"), width = wd, height = ht, res = re)
+    j <- match(names(profiles)[1], what); p=1
     plot(as.numeric(seq(min_val[[j]], max_val[[j]], inc[[j]])),
          profiles[[p]]$jnLL_df$value - min(profiles[[p]]$jnLL_df$value),
          type = "b", pch = 19, lwd = 2, col = "black", cex = 0.8,
@@ -1395,7 +1434,8 @@ saveRDS(list(retro,retro_diff, runtime), paste0(outdir,"/retrospective.rds"))
                          profiles[[p]]$FishLen_nLL_df$value - min(profiles[[p]]$FishLen_nLL_df$value),
                          profiles[[p]]$FishIdx_nLL_df$value - min(profiles[[p]]$FishIdx_nLL_df$value),
                          profiles[[p]]$rec_nLL_df$value - min(profiles[[p]]$rec_nLL_df$value)) * 1.1)),
-         xlab = ifelse(j==1,"Natural Mortality (M)","Steepness (h)"),
+         xlab = ifelse(j==1,"Natural Mortality (M)",ifelse(j==2,"Steepness (h)",
+           ifelse(j==3,"Catchability coefficient (log)","Unfished Recruitment (log)"))),
          ylab = expression(Delta ~ "Negative Log-Likelihood"),
          main = "Likelihood Profile Components")
     
