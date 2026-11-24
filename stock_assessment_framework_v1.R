@@ -10,7 +10,7 @@ library(dplyr)
 library(parallel)
 #### 1 data preparation ####
 
-sp <- "Ocyurus_chrysurus"
+sp <- "Lutjanus_synagris"
 
 cat <- read.csv(paste0("data/",sp,".sc1.csv"))
 ind <- read.csv(paste0("data/",sp,".index.csv"))
@@ -48,7 +48,7 @@ dat <- list(
 )
 
 par <- list(
-  logR0=log(100000),
+  logR0=log(input$R0),
   logq=log(0.001),
   logF=rep(log(0.2),length(as.vector(cat$Year))),
   logSigmaIdx=log(0.2),
@@ -628,7 +628,8 @@ do_retrospective1 <- function (n_retro, data, parameters, mapping, random = NULL
     retro_parameters$RecDevs <- parameters$RecDevs[seq_len(length(parameters$RecDevs) - j)]
     
     if (any(names(retro_mapping) == "RecDevs")) {
-      retro_mapping$RecDevs <- parameters$RecDevs[1:(length(parameters$RecDevs) - j)]}
+      # trim the *map* (factor, with year 1 kept as NA), not the parameter values
+      retro_mapping$RecDevs <- droplevels(retro_mapping$RecDevs[seq_len(length(retro_mapping$RecDevs) - j)])}
     
     retro_data$catch <- data$catch[1:(length(data$catch) - j)]
     
@@ -1030,7 +1031,9 @@ nll <- function(par){
 #### 5 model fitting and quick diags ####
 starttime <- Sys.time()
 ## fixed parameters
-mapping <- list(M=factor(NA), h=factor(NA), logSigmaF=factor(NA), logSigmaR=factor(NA), logSigmaC=factor(NA))
+mapping <- list(M=factor(NA), h=factor(NA), logSigmaF=factor(NA), logSigmaR=factor(NA), 
+  logSigmaC=factor(NA), RecDevs=factor(c(NA, seq(2:length(par$RecDevs)))))
+  
 if(dat$selex=="logistic"){
   #RTMB::TapeConfig(comparison="tape")
   mapping$log.desc <- factor(NA)
@@ -1199,7 +1202,8 @@ if(sp=="Lutjanus_analis"){
         lo <- 0.27;hi <- 0.33
         }
 
-what <- c("M","h","logq","logR0"); min_val <- c(lo,0.5,pars$logR0-0.5,pars$logq-0.5); max_val <- c(hi,0.9,pars$logR0+0.5,pars$logq+0.5); inc <- c(0.01,0.05,0.1,0.1)
+what <- c("M","h","logq","logR0"); min_val <- c(lo,0.5,pars$logq-0.5,pars$logR0-0.5); 
+max_val <- c(hi,0.9,pars$logq+0.5,pars$logR0+0.5); inc <- c(0.01,0.05,0.1,0.1)
 
 profiles <- list()
 starttime <- Sys.time()
@@ -1233,7 +1237,10 @@ endtime <- Sys.time(); runtime <- endtime-starttime; round(runtime,2)
 unique(retro$peel) 
 retro_diff <- as.data.frame(SPoRC::get_retrospective_relative_difference(retro))
 
-saveRDS(list(retro,retro_diff, runtime), paste0(outdir,"/retrospective.rds"))
+mohns_rho <- retro_diff |> filter(peel == (max(Year) - Year)) |>
+  group_by(Type, Region) |> summarize(rho = mean(rd))
+
+saveRDS(list(retro,retro_diff, mohns_rho, runtime), paste0(outdir,"/retrospective.rds"))
 
 #### 9 plots ####
 
@@ -1455,18 +1462,24 @@ saveRDS(list(retro,retro_diff, runtime), paste0(outdir,"/retrospective.rds"))
 
 ##### retrospective
 {
-  wd <- 7000
-  ht <- 8400
+  wd <- 3000
+  ht <- 3000
   re <- 300
-  png(paste0(outdir,"/retrospective.png"), width = wd, height = ht, res = re)
-  Rmisc::multiplot(cols = 1,
-                   SPoRC::get_retrospective_plot(retro, Rec_Age = 1)[[1]],
-                   SPoRC::get_retrospective_plot(retro, Rec_Age = 1)[[2]],
-                   SPoRC::get_retrospective_plot(retro, Rec_Age = 1)[[3]]
-                   )
-  graphics.off()
-}
+  png(paste0(outdir, "/retrospective.png"), width = wd, height = ht, res = re)
+  par(mfrow = c(2, 1), mar = c(4, 4, 2, 1))
 
+  for (tp in unique(retro$Type)) {
+    d <- retro[retro$Type == tp, ]
+    if (tp == "Recruitment") d$value <- d$value / 1e6
+    plot(NA, xlim = range(d$Year), ylim = c(0, max(d$value)),
+      xlab = "Year", ylab = ifelse(tp == "Recruitment", "Age-0 recruits (Millions)", tp),
+      main = paste("Retrospective:", tp))
+    for (p in rev(sort(unique(d$peel))))
+          lines(d$Year[d$peel == p], d$value[d$peel == p],
+            col = ifelse(p == 0, "black", p + 1), lwd = ifelse(p == 0, 2.5, 1.5))
+  }
+graphics.off()
+}
 # Kobe plot
 {
   SSB_rel <- plr$SSB / BH_RP$b_ref_pt
@@ -1496,6 +1509,12 @@ totalTime <- enTime-stTime
 warning("End of ",stk, " assessment", " in ", print(round(totalTime,2)))
 
 #### --- ####
+
+
+
+
+
+
 
 
 
