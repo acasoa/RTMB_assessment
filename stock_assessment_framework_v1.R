@@ -10,7 +10,7 @@ library(dplyr)
 library(parallel)
 #### 1 data preparation ####
 
-sp <- "Lutjanus_synagris"
+sp <- "Lutjanus_jocu"
 
 cat <- read.csv(paste0("data/",sp,".sc1.csv"))
 ind <- read.csv(paste0("data/",sp,".index.csv"))
@@ -1287,9 +1287,10 @@ saveRDS(list(retro,retro_diff, mohns_rho, runtime), paste0(outdir,"/retrospectiv
     Sa <- (1-wt)*exp(-0.5*((Lseq-as.numeric(plr$peak))/as.numeric(plr$ascWid))^2) + 
       wt*exp(-0.5*((Lseq-as.numeric(plr$peak))/exp(fit$par["log.desc"]))^2)
   }else{
-    wt <- plogis(20 * (Lseq - as.numeric(plr$peak))/(1 + abs(Lseq - as.numeric(plr$peak))))
-  Sa <- (1-wt)*exp(-0.5*((Lseq-as.numeric(plr$peak))/as.numeric(plr$ascWid))^2) + 
-    wt*exp(-0.5*((Lseq-as.numeric(plr$peak))/1e4)^2)
+    #wt <- plogis(20 * (Lseq - as.numeric(plr$peak))/(1 + abs(Lseq - as.numeric(plr$peak))))
+    #Sa <- (1-wt)*exp(-0.5*((Lseq-as.numeric(plr$peak))/as.numeric(plr$ascWid))^2) + 
+    #  wt*exp(-0.5*((Lseq-as.numeric(plr$peak))/1e4)^2)
+    Sa <- 1 / (1 + exp(-log(19) * (Lseq - plr$SL50) / (plr$SL95 - plr$SL50)))
   }
   
   plot(Lseq, Sa, xlab = "Length (cm)", ylab = "Selectivity", 
@@ -1403,22 +1404,22 @@ saveRDS(list(retro,retro_diff, mohns_rho, runtime), paste0(outdir,"/retrospectiv
                    ifelse(i==3,"logqCoef","logR0"))),".png"), width = wd, height = ht, res = re)
       
       plot(as.numeric(seq(min_val[[i]], max_val[[i]], inc[[i]])),
-           profiles[[i]]$jnLL_df$value - min(profiles[[i]]$jnLL_df$value), 
+           profiles[[i]]$jnLL_df$value - min(profiles[[i]]$jnLL_df$value, na.rm = T), 
            type = "b", pch = 19, lwd = 2, col = "black", cex = 0.8,
-           ylim = c(0, max(3, max(profiles[[i]]$jnLL_df$value - min(profiles[[i]]$jnLL_df$value),
-                           profiles[[i]]$Catch_nLL_df$value - min(profiles[[i]]$Catch_nLL_df$value),
-                           profiles[[i]]$FishLen_nLL_df$value - min(profiles[[i]]$FishLen_nLL_df$value),
-                           profiles[[i]]$FishIdx_nLL_df$value - min(profiles[[i]]$FishIdx_nLL_df$value),
-                           profiles[[i]]$rec_nLL_df$value - min(profiles[[i]]$rec_nLL_df$value)) * 1.1)),
+           ylim = c(0, max(3, max(profiles[[i]]$jnLL_df$value - min(profiles[[i]]$jnLL_df$value, na.rm = T),
+                           profiles[[i]]$Catch_nLL_df$value - min(profiles[[i]]$Catch_nLL_df$value, na.rm = T),
+                           profiles[[i]]$FishLen_nLL_df$value - min(profiles[[i]]$FishLen_nLL_df$value, na.rm = T),
+                           profiles[[i]]$FishIdx_nLL_df$value - min(profiles[[i]]$FishIdx_nLL_df$value, na.rm = T),
+                           profiles[[i]]$rec_nLL_df$value - min(profiles[[i]]$rec_nLL_df$value, na.rm = T), na.rm = T) * 1.1)),
            xlab = ifelse(i==1,"Natural Mortality (M)",ifelse(i==2,"Steepness (h)",
                    ifelse(i==3,"Catchability coefficient (log)","Unfished Recruitment (log)"))),
            ylab = expression(Delta ~ "Negative Log-Likelihood"),
            main = "Likelihood Profile Components")
       
-      lines(seq(min_val[[i]], max_val[[i]], inc[[i]]), profiles[[i]]$Catch_nLL_df$value - min(profiles[[i]]$Catch_nLL_df$value), type = "b", pch = 16, col = "red", cex = 0.8, lty = 2)
-      lines(seq(min_val[[i]], max_val[[i]], inc[[i]]), profiles[[i]]$FishLen_nLL_df$value - min(profiles[[i]]$FishLen_nLL_df$value),   type = "b", pch = 17, col = "blue", cex = 0.8, lty = 2)
-      lines(seq(min_val[[i]], max_val[[i]], inc[[i]]), profiles[[i]]$FishIdx_nLL_df$value - min(profiles[[i]]$FishIdx_nLL_df$value),   type = "b", pch = 18, col = "green4", cex = 0.8, lty = 2)
-      lines(seq(min_val[[i]], max_val[[i]], inc[[i]]), profiles[[i]]$rec_nLL_df$value - min(profiles[[i]]$rec_nLL_df$value),   type = "b", pch = 15, col = "orange", cex = 0.8, lty = 2)
+      lines(seq(min_val[[i]], max_val[[i]], inc[[i]]), profiles[[i]]$Catch_nLL_df$value - min(profiles[[i]]$Catch_nLL_df$value, na.rm = T), type = "b", pch = 16, col = "red", cex = 0.8, lty = 2)
+      lines(seq(min_val[[i]], max_val[[i]], inc[[i]]), profiles[[i]]$FishLen_nLL_df$value - min(profiles[[i]]$FishLen_nLL_df$value, na.rm = T),   type = "b", pch = 17, col = "blue", cex = 0.8, lty = 2)
+      lines(seq(min_val[[i]], max_val[[i]], inc[[i]]), profiles[[i]]$FishIdx_nLL_df$value - min(profiles[[i]]$FishIdx_nLL_df$value, na.rm = T),   type = "b", pch = 18, col = "green4", cex = 0.8, lty = 2)
+      lines(seq(min_val[[i]], max_val[[i]], inc[[i]]), profiles[[i]]$rec_nLL_df$value - min(profiles[[i]]$rec_nLL_df$value, na.rm = T),   type = "b", pch = 15, col = "orange", cex = 0.8, lty = 2)
       abline(h = 1.92, col = "gray40", lty = 2, lwd = 1.5)
       
       legend("topright", legend = c("Total", "Catch", "Length", "Index", "RecDevs"),
@@ -1460,7 +1461,7 @@ saveRDS(list(retro,retro_diff, mohns_rho, runtime), paste0(outdir,"/retrospectiv
   }
 }
 
-##### retrospective
+# retrospective
 {
   wd <- 3000
   ht <- 3000
@@ -1509,12 +1510,3 @@ totalTime <- enTime-stTime
 warning("End of ",stk, " assessment", " in ", print(round(totalTime,2)))
 
 #### --- ####
-
-
-
-
-
-
-
-
-
