@@ -10,7 +10,7 @@ library(dplyr)
 library(parallel)
 #### 1 data preparation ####
 
-sp <- "Lutjanus_jocu"
+sp <- "Lutjanus_synagris"
 
 cat <- read.csv(paste0("data/",sp,".sc1.csv"))
 ind <- read.csv(paste0("data/",sp,".index.csv"))
@@ -49,18 +49,18 @@ dat <- list(
 
 par <- list(
   logR0=log(input$R0),
-  logq=log(0.001),
+  logq=log(input$q),
   logF=rep(log(0.2),length(as.vector(cat$Year))),
-  logSigmaIdx=log(0.2),
-  logSigmaR=log(0.5),
-  logSigmaC=log(0.2),
+  logSigmaIdx=log(input$sigmaIdx),
+  logSigmaR=log(input$sigmaR),
+  logSigmaC=log(input$sigmaC),
+  logSigmaF=log(input$sigmaF),
   RecDevs=rep(0,length(as.vector(cat$Year))),
   logSL50=log(input$SL50),
   logdiff=log(diff(c(input$SL50, input$SL95))),
   h=input$h,
   M=input$M,
-  log.desc= log(10)
-  ,logSigmaF=log(0.5)
+  log.desc= log(input$desc)  
 )
 
 stk <- paste0(sp,"_ME_NE") ##### name of stock
@@ -1031,7 +1031,7 @@ nll <- function(par){
 #### 5 model fitting and quick diags ####
 starttime <- Sys.time()
 ## fixed parameters
-mapping <- list(M=factor(NA), h=factor(NA), logSigmaF=factor(NA), logSigmaR=factor(NA), 
+mapping <- list(M=factor(NA),  h=factor(NA), logSigmaF=factor(NA), logSigmaR=factor(NA), 
   logSigmaC=factor(NA), RecDevs=factor(c(NA, seq(2:length(par$RecDevs)))))
   
 if(dat$selex=="logistic"){
