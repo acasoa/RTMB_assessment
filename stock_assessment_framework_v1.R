@@ -38,7 +38,7 @@ dat <- list(
   bw=input$bw
   ,Amax=input$Amax,
   ages=as.vector(1:input$Amax),
-  CV_len = input$CV_len,
+  CV_len = 0.1,
   L50=input$L50,
   L95=input$L95
   ,rec=1,
@@ -1256,29 +1256,29 @@ saveRDS(list(retro,retro_diff, mohns_rho, runtime), paste0(outdir,"/retrospectiv
   
   # catch timeseries
   plot(dat$years, dat$catch, pch = 20, type = "h",lwd = 10,
-      xlab = "Year", ylab = "Catch (Metric tons)", col = "gray70",
-      main = "Catch time series")
+       xlab = "Year", ylab = "Catch (Metric tons)", col = "gray70",
+       main = "Catch time series")
   
   # cpue residuals
   plot(dat$index.yrs, dat$index.obs, pch = 20,
-      xlab = "Year", ylab = "Abundance index",
-      main = "Observed vs Predicted abundance index")
+       xlab = "Year", ylab = "Abundance index",
+       main = "Observed vs Predicted abundance index")
   lines(dat$index.yrs, plr$IndexPred, col = "red", lwd = 2)
   legend("topright", legend = c("Observed", "Predicted"), 
-        col = c("black", "red"), pch = c(20, NA), lty = c(NA, 1), lwd = c(NA, 2))
+         col = c("black", "red"), pch = c(20, NA), lty = c(NA, 1), lwd = c(NA, 2))
   
   # length residuals
   plot(dat$length.bins, 
-      colSums(dat$length.obs)/sum(colSums(dat$length.obs)), 
-      type = "h", lwd = 6, col = "gray70",
-      xlab = "Length (cm)", ylab = "Proportion", 
-      main = "Aggregated Length Composition")
+       colSums(dat$length.obs)/sum(colSums(dat$length.obs)), 
+       type = "h", lwd = 6, col = "gray70",
+       xlab = "Length (cm)", ylab = "Proportion", 
+       main = "Aggregated Length Composition")
   lines(dat$length.bins, 
         colSums(matrix(plr$Pmat, nrow = length(dat$length.idx),ncol = length(dat$length.bins))
-                                *dat$length.nsamps)/sum(dat$length.nsamps)
+                                 *dat$length.nsamps)/sum(dat$length.nsamps)
         , col = "red", lwd = 2.5, type = "b", pch = 16, cex = 0.6)
   legend("topright", legend = c("Observed", "Predicted"), 
-        col = c("gray70", "red"), lwd = c(6, 2.5), lty = c(1, 1), pch = c(NA, 16))
+         col = c("gray70", "red"), lwd = c(6, 2.5), lty = c(1, 1), pch = c(NA, 16))
   
   # selectivity 
   Lseq <- seq(0, max(dat$length.bins), length.out = 200)
@@ -1294,8 +1294,8 @@ saveRDS(list(retro,retro_diff, mohns_rho, runtime), paste0(outdir,"/retrospectiv
   }
   
   plot(Lseq, Sa, xlab = "Length (cm)", ylab = "Selectivity", 
-      main = paste("Selectivity Curve (", dat$selex, ")", sep = ""),
-      type = "l", lwd = 2.5, col = "darkblue")
+       main = paste("Selectivity Curve (", dat$selex, ")", sep = ""),
+       type = "l", lwd = 2.5, col = "darkblue")
   
   graphics.off()
 }
@@ -1313,14 +1313,14 @@ saveRDS(list(retro,retro_diff, mohns_rho, runtime), paste0(outdir,"/retrospectiv
   # catch residuals
   resid.catch <- log(dat$catch) - plr$logPredC
   plot(dat$years, resid.catch, pch = 20,
-      xlab = "Year", ylab = "Log Residuals",
-      main = "Catch Residuals", ylim = c(-1, 1))
+       xlab = "Year", ylab = "Log Residuals",
+       main = "Catch Residuals", ylim = c(-1, 1))
   abline(h = 0, col = "red", lty = 1)
   
   # cpue residuals
   resid.index <- log(dat$index.obs) - log(plr$IndexPred)
   plot(dat$index.yrs, resid.index, pch=20, ylim=c(-1,1), main="CPUE Residuals",
-      xlab = "Year", ylab = "Log Residuals",)
+       xlab = "Year", ylab = "Log Residuals",)
   abline(h=0, col="red", lty=1)
   graphics.off()
 }
@@ -1335,40 +1335,40 @@ saveRDS(list(retro,retro_diff, mohns_rho, runtime), paste0(outdir,"/retrospectiv
   par(mfrow=c(2,2))
   # B
   plot(dat$years,plr$B, ylim = c(0,max(plr$B + 1.96 * plr_se$B)), pch=20,
-      xlab = "Year",ylab = "Biomass (t)", main = "Total Biomass")
+       xlab = "Year",ylab = "Biomass (t)", main = "Total Biomass")
   lines(dat$years,plr$B)
   lines(dat$years,plr$B - 1.96 * plr_se$B, lty=2)
   lines(dat$years,plr$B + 1.96 * plr_se$B, lty=2)
   
   # Bratio
   plot(dat$years,plr$Bratio, 
-      ylim = c(0,as.numeric(number(max(plr$Bratio + 1.96 * plr_se$Bratio),0.1))), pch=20,
-      xlab = "Year", ylab = expression(Depletion ~ (SSB / SSB[0])), main = "Stock Depletion (Bratio)")
+       ylim = c(0,as.numeric(number(max(plr$Bratio + 1.96 * plr_se$Bratio),0.1))), pch=20,
+       xlab = "Year", ylab = expression(Depletion ~ (SSB / SSB[0])), main = "Stock Depletion (Bratio)")
   lines(dat$years,plr$Bratio)
   lines(dat$years,plr$Bratio - 1.96 * plr_se$Bratio, lty=2)
   lines(dat$years,plr$Bratio + 1.96 * plr_se$Bratio, lty=2)
   abline(h=1, col="red", lty=2)
   abline(h=BH_RP$b_ref_pt/BH_RP$virgin_b_ref_pt, col="red", lty=2)
   text(x = min(dat$years) + 4,y = BH_RP$b_ref_pt/BH_RP$virgin_b_ref_pt,
-      labels = expression(SSB[msy] / SSB[0]), pos = 3,col = "black",cex = 0.9)
+       labels = expression(SSB[msy] / SSB[0]), pos = 3,col = "black",cex = 0.9)
   #abline(h=BH_RP$b_ref_pt/BH_RP$virgin_b_ref_pt/2, col="red", lty=2)
   #text(x = min(dat$years) + 4,y = BH_RP$b_ref_pt/BH_RP$virgin_b_ref_pt/2,
   #     labels = expression("Limit Reference Point"), pos = 3,col = "black",cex = 0.7)
   # RecDevs
   plot(dat$years,plr$Rec/1e6, pch=20,
-      xlab = "Year", ylab = "Age-0 recruits (Millions)", main = "Recruitment")
+       xlab = "Year", ylab = "Age-0 recruits (Millions)", main = "Recruitment")
   lines(dat$years,plr$Rec/1e6)
   
   # F
   plot(dat$years,plr$F/BH_RP$f_ref_pt, pch=20, 
     ylim = c(0,max(plr$F/BH_RP$f_ref_pt + 1.96*plr_se$F/BH_RP$f_ref_pt)+0.5),
-      xlab = "Year", ylab = "Relative F", main = "Fishing Mortality")
+       xlab = "Year", ylab = "Relative F", main = "Fishing Mortality")
   arrows(dat$years, plr$F/BH_RP$f_ref_pt - 1.96*plr_se$F/BH_RP$f_ref_pt,
-        dat$years, plr$F/BH_RP$f_ref_pt + 1.96*plr_se$F/BH_RP$f_ref_pt,
-        angle=0, code=3, length=0.02)
+         dat$years, plr$F/BH_RP$f_ref_pt + 1.96*plr_se$F/BH_RP$f_ref_pt,
+         angle=0, code=3, length=0.02)
   abline(h=1, col="red", lty=2)
   text(x = min(dat$years) + 4,y = 1,
-      labels = expression(F[msy]), pos = 3,col = "black",cex = 0.9)
+       labels = expression(F[msy]), pos = 3,col = "black",cex = 0.9)
   
   graphics.off()
 
