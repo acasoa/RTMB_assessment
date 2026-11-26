@@ -1,1 +1,2 @@
-Linf	k	t0	aw	bw	h	M	L50	L95	CV_len	Amax	R0	q	F	SigmaIdx	SigmaR	SigmaC	SigmaF	SL50	SL95	desc
+Linf	k	t0	aw	bw	Amax	L50	L95	SL50	SL95	h	M
+92.3	0.159	0	0.018	2.9559	29	28	34	32	42	0.7	0.208
